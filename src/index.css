@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 0%;
+    --foreground: 192 100% 71%;
+
+    --card: 0 0% 4%;
+    --card-foreground: 192 100% 71%;
+
+    --popover: 0 0% 4%;
+    --popover-foreground: 192 100% 71%;
+
+    --primary: 352 100% 57%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 192 100% 71%;
+    --secondary-foreground: 0 0% 0%;
+
+    --muted: 240 5% 15%;
+    --muted-foreground: 192 50% 50%;
+
+    --accent: 349 89% 44%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 352 100% 57%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 352 100% 57%;
+    --input: 240 5% 15%;
+    --ring: 352 100% 57%;
+
+    --radius: 0.25rem;
+
+    /* CyberX Custom Variables */
+    --cyber-red: 352 100% 57%;
+    --cyber-deep-red: 349 89% 44%;
+    --cyber-cyan: 192 100% 71%;
+    --cyber-glow-red: 352 100% 57%;
+    --cyber-glow-cyan: 192 100% 71%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 192 100% 71%;
+
+    --card: 0 0% 4%;
+    --card-foreground: 192 100% 71%;
+
+    --popover: 0 0% 4%;
+    --popover-foreground: 192 100% 71%;
+
+    --primary: 352 100% 57%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 192 100% 71%;
+    --secondary-foreground: 0 0% 0%;
+
+    --muted: 240 5% 15%;
+    --muted-foreground: 192 50% 50%;
+
+    --accent: 349 89% 44%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 352 100% 57%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 352 100% 57%;
+    --input: 240 5% 15%;
+    --ring: 352 100% 57%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    cursor: none !important;
+  }
+
+  body {
+    @apply bg-black text-foreground overflow-x-hidden;
+  }
+
+  /* Scanline effect */
+  .scanlines {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.15),
+      rgba(0, 0, 0, 0.15) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+    z-index: 999;
+  }
+}
+
+@layer utilities {
+  .cyber-glow-red {
+    text-shadow: 0 0 10px hsl(var(--cyber-red) / 0.8),
+                 0 0 20px hsl(var(--cyber-red) / 0.5),
+                 0 0 30px hsl(var(--cyber-red) / 0.3);
+  }
+
+  .cyber-glow-cyan {
+    text-shadow: 0 0 10px hsl(var(--cyber-cyan) / 0.8),
+                 0 0 20px hsl(var(--cyber-cyan) / 0.5),
+                 0 0 30px hsl(var(--cyber-cyan) / 0.3);
+  }
+
+  .glass-panel {
+    background: rgba(10, 0, 2, 0.7);
+    backdrop-filter: blur(12px) saturate(120%);
+    border: 1px solid hsl(var(--cyber-red));
+    box-shadow: 0 0 15px rgba(255, 43, 69, 0.3),
+                inset 0 0 15px rgba(255, 43, 69, 0.1);
+  }
+}
+
+@keyframes cp-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+    opacity: 1;
+  }
+  20%, 24%, 55% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(255, 43, 69, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(255, 43, 69, 0.6);
+  }
+}
+
+.animate-flicker {
+  animation: cp-flicker 5s linear infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
