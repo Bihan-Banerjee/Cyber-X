@@ -1,6 +1,7 @@
 import express from 'express';
 import { portScan, parsePorts } from '../scanners/portScanner.js';
 import { performOSFingerprint } from '../scanners/osFingerprint.js';
+import { performWHOISLookup } from '../scanners/whoisLookup.js';
 
 const router = express.Router();
 
@@ -90,6 +91,33 @@ router.post('/os-fingerprint', async (req, res) => {
     console.error('OS fingerprint error:', error);
     res.status(500).json({
       error: 'Fingerprint failed',
+      message: error.message,
+    });
+  }
+});
+
+// WHOIS Lookup Route
+router.post('/whois', async (req, res) => {
+  try {
+    const { domain } = req.body;
+
+    if (!domain || typeof domain !== 'string') {
+      return res.status(400).json({ error: 'Invalid domain parameter' });
+    }
+
+    // Basic domain validation
+    const cleanDomain = domain.toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: 'Invalid domain format' });
+    }
+
+    const result = await performWHOISLookup(cleanDomain);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('WHOIS lookup error:', error);
+    res.status(500).json({
+      error: 'WHOIS lookup failed',
       message: error.message,
     });
   }
