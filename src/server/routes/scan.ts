@@ -2,6 +2,7 @@ import express from 'express';
 import { portScan, parsePorts } from '../scanners/portScanner.js';
 import { performOSFingerprint } from '../scanners/osFingerprint.js';
 import { performWHOISLookup } from '../scanners/whoisLookup.js';
+import { performServiceDetection } from '../scanners/serviceDetection.js';
 
 const router = express.Router();
 
@@ -118,6 +119,33 @@ router.post('/whois', async (req, res) => {
     console.error('WHOIS lookup error:', error);
     res.status(500).json({
       error: 'WHOIS lookup failed',
+      message: error.message,
+    });
+  }
+});
+
+// Service Detection Route
+router.post('/service-detect', async (req, res) => {
+  try {
+    const { target, ports = '21-25,53,80,110,143,443,445,3306,3389,5432,8080', timeoutMs = 5000 } = req.body;
+
+    if (!target || typeof target !== 'string') {
+      return res.status(400).json({ error: 'Invalid target parameter' });
+    }
+
+    if (!isValidTarget(target)) {
+      return res.status(400).json({ error: 'Invalid target format' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
+
+    const result = await performServiceDetection(target, ports, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Service detection error:', error);
+    res.status(500).json({
+      error: 'Service detection failed',
       message: error.message,
     });
   }
