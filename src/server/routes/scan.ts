@@ -3,6 +3,7 @@ import { portScan, parsePorts } from '../scanners/portScanner.js';
 import { performOSFingerprint } from '../scanners/osFingerprint.js';
 import { performWHOISLookup } from '../scanners/whoisLookup.js';
 import { performServiceDetection } from '../scanners/serviceDetection.js';
+import { performSubdomainEnumeration } from '../scanners/subdomainEnumeration.js';
 
 const router = express.Router();
 
@@ -150,5 +151,35 @@ router.post('/service-detect', async (req, res) => {
     });
   }
 });
+
+// Subdomain Enumeration Route
+router.post('/subdomains', async (req, res) => {
+  try {
+    const { domain, timeoutMs = 3000 } = req.body;
+
+    if (!domain || typeof domain !== 'string') {
+      return res.status(400).json({ error: 'Invalid domain parameter' });
+    }
+
+    // Basic domain validation
+    const cleanDomain = domain.toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: 'Invalid domain format' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 10000);
+
+    const result = await performSubdomainEnumeration(cleanDomain, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Subdomain enumeration error:', error);
+    res.status(500).json({
+      error: 'Subdomain enumeration failed',
+      message: error.message,
+    });
+  }
+});
+
 
 export default router;

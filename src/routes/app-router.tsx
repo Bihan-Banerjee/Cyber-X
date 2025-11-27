@@ -11,6 +11,7 @@ import NotFound from "@/pages/NotFound";
 import OSFingerprint from "@/pages/tools/OSFingerprint";
 import WHOISLookup from "@/pages/tools/WHOISLookup";
 import ServiceDetection from "@/pages/tools/ServiceDetection";
+import SubdomainEnumeration from "@/pages/tools/SubdomainEnumeration";
 
 const AppRouter = () => {
   return (
@@ -23,6 +24,7 @@ const AppRouter = () => {
         <Route path="/tools/os-fingerprint" element={<OSFingerprint />} />
         <Route path="/tools/whois" element={<WHOISLookup />} />
         <Route path="/tools/service-detect" element={<ServiceDetection />} />
+        <Route path="/tools/subdomains" element={<SubdomainEnumeration />} />
         <Route path="/tools/hash-tool" element={<HashTool />} />
         <Route path="/tools/email-breach" element={<EmailBreach />} />
         <Route path="/honeypots" element={<Honeypots />} />
