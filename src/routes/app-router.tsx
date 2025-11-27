@@ -8,6 +8,7 @@ import PortScanner from "@/pages/tools/PortScanner";
 import HashTool from "@/pages/tools/HashTool";
 import EmailBreach from "@/pages/tools/EmailBreach";
 import NotFound from "@/pages/NotFound";
+import OSFingerprint from "@/pages/tools/OSFingerprint";
 
 const AppRouter = () => {
   return (
@@ -17,6 +18,7 @@ const AppRouter = () => {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/tools" element={<Tools />} />
         <Route path="/tools/port-scanner" element={<PortScanner />} />
+        <Route path="/tools/os-fingerprint" element={<OSFingerprint />} />
         <Route path="/tools/hash-tool" element={<HashTool />} />
         <Route path="/tools/email-breach" element={<EmailBreach />} />
         <Route path="/honeypots" element={<Honeypots />} />
