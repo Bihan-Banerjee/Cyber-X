@@ -12,7 +12,8 @@ import OSFingerprint from "@/pages/tools/OSFingerprint";
 import WHOISLookup from "@/pages/tools/WHOISLookup";
 import ServiceDetection from "@/pages/tools/ServiceDetection";
 import SubdomainEnumeration from "@/pages/tools/SubdomainEnumeration";
-
+import DNSRecon
+ from "@/pages/tools/DNSRecon";
 const AppRouter = () => {
   return (
     <Layout>
@@ -25,6 +26,7 @@ const AppRouter = () => {
         <Route path="/tools/whois" element={<WHOISLookup />} />
         <Route path="/tools/service-detect" element={<ServiceDetection />} />
         <Route path="/tools/subdomains" element={<SubdomainEnumeration />} />
+        <Route path="/tools/dns-recon" element={<DNSRecon />} />
         <Route path="/tools/hash-tool" element={<HashTool />} />
         <Route path="/tools/email-breach" element={<EmailBreach />} />
         <Route path="/honeypots" element={<Honeypots />} />

@@ -4,6 +4,7 @@ import { performOSFingerprint } from '../scanners/osFingerprint.js';
 import { performWHOISLookup } from '../scanners/whoisLookup.js';
 import { performServiceDetection } from '../scanners/serviceDetection.js';
 import { performSubdomainEnumeration } from '../scanners/subdomainEnumeration.js';
+import { performDNSRecon } from '../scanners/dnsRecon.js';
 
 const router = express.Router();
 
@@ -176,6 +177,35 @@ router.post('/subdomains', async (req, res) => {
     console.error('Subdomain enumeration error:', error);
     res.status(500).json({
       error: 'Subdomain enumeration failed',
+      message: error.message,
+    });
+  }
+});
+
+// DNS Reconnaissance Route
+router.post('/dns-recon', async (req, res) => {
+  try {
+    const { domain, timeoutMs = 5000 } = req.body;
+
+    if (!domain || typeof domain !== 'string') {
+      return res.status(400).json({ error: 'Invalid domain parameter' });
+    }
+
+    // Basic domain validation
+    const cleanDomain = domain.toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: 'Invalid domain format' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
+
+    const result = await performDNSRecon(cleanDomain, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('DNS recon error:', error);
+    res.status(500).json({
+      error: 'DNS reconnaissance failed',
       message: error.message,
     });
   }
