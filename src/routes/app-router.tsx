@@ -6,14 +6,15 @@ import Tools from "@/pages/Tools";
 import Honeypots from "@/pages/Honeypots";
 import PortScanner from "@/pages/tools/PortScanner";
 import HashTool from "@/pages/tools/HashTool";
-import EmailBreach from "@/pages/tools/EmailBreach";
 import NotFound from "@/pages/NotFound";
 import OSFingerprint from "@/pages/tools/OSFingerprint";
 import WHOISLookup from "@/pages/tools/WHOISLookup";
 import ServiceDetection from "@/pages/tools/ServiceDetection";
 import SubdomainEnumeration from "@/pages/tools/SubdomainEnumeration";
-import DNSRecon
- from "@/pages/tools/DNSRecon";
+import DNSRecon from "@/pages/tools/DNSRecon";
+import APIScanner from "@/pages/tools/APIScanner";
+import EmailBreachChecker from "../pages/tools/EmailBreachChecker";
+
 const AppRouter = () => {
   return (
     <Layout>
@@ -27,8 +28,9 @@ const AppRouter = () => {
         <Route path="/tools/service-detect" element={<ServiceDetection />} />
         <Route path="/tools/subdomains" element={<SubdomainEnumeration />} />
         <Route path="/tools/dns-recon" element={<DNSRecon />} />
+        <Route path="/tools/api-scanner" element={<APIScanner />} />
         <Route path="/tools/hash-tool" element={<HashTool />} />
-        <Route path="/tools/email-breach" element={<EmailBreach />} />
+        <Route path="/tools/breach-check" element={<EmailBreachChecker />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

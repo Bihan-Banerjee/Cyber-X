@@ -5,6 +5,8 @@ import { performWHOISLookup } from '../scanners/whoisLookup.js';
 import { performServiceDetection } from '../scanners/serviceDetection.js';
 import { performSubdomainEnumeration } from '../scanners/subdomainEnumeration.js';
 import { performDNSRecon } from '../scanners/dnsRecon.js';
+import { performAPIScan } from '../scanners/apiScanner.js';
+import { performBreachCheck } from '../scanners/breachChecker.js';
 
 const router = express.Router();
 
@@ -206,6 +208,57 @@ router.post('/dns-recon', async (req, res) => {
     console.error('DNS recon error:', error);
     res.status(500).json({
       error: 'DNS reconnaissance failed',
+      message: error.message,
+    });
+  }
+});
+
+// API Scanner Route
+router.post('/api-scanner', async (req, res) => {
+  try {
+    const { target, apiKey, timeoutMs = 10000 } = req.body;
+
+    if (!target || typeof target !== 'string') {
+      return res.status(400).json({ error: 'Invalid target parameter' });
+    }
+
+    // Basic URL validation
+    try {
+      new URL(target);
+    } catch {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 30000);
+
+    const result = await performAPIScan(target, apiKey, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('API scan error:', error);
+    res.status(500).json({
+      error: 'API scan failed',
+      message: error.message,
+    });
+  }
+});
+
+// Breach Check Route
+router.post('/breach-check', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Invalid email parameter' });
+    }
+
+    const result = await performBreachCheck(email);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Breach check error:', error);
+    res.status(500).json({
+      error: 'Breach check failed',
       message: error.message,
     });
   }

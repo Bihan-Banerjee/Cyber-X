@@ -8,7 +8,7 @@ interface CyberpunkCardProps {
 
 const CyberpunkCard = ({ title, children, className = "" }: CyberpunkCardProps) => {
   return (
-    <div className={`relative w-full max-w-3xl ${className}`}>
+    <div className={`relative w-full max-w-3xl mt-12 mb-8 opacity-95 ${className}`}>
       {/* Top decorative line */}
       <div className="absolute -top-2 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-cyber-red to-transparent" />
       
