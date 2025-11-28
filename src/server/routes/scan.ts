@@ -10,6 +10,7 @@ import { performBreachCheck } from '../scanners/breachChecker.js';
 import { performHashCracking } from '../scanners/hashCracker.js';
 import { performDirectoryFuzzing } from '../scanners/directoryFuzzer.js';
 import { performAuthCheck } from '../scanners/authChecker.js';
+import { performContainerScan } from '../scanners/containerScanner.js';
 
 const router = express.Router();
 
@@ -342,6 +343,29 @@ router.post('/auth-check', async (req, res) => {
     console.error('Auth check error:', error);
     res.status(500).json({
       error: 'Authentication check failed',
+      message: error.message,
+    });
+  }
+});
+
+// Container Scanner Route
+router.post('/container-scan', async (req, res) => {
+  try {
+    const { imageName, timeoutMs = 30000 } = req.body;
+
+    if (!imageName || typeof imageName !== 'string') {
+      return res.status(400).json({ error: 'Invalid imageName parameter' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+
+    const result = await performContainerScan(imageName, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Container scan error:', error);
+    res.status(500).json({
+      error: 'Container scan failed',
       message: error.message,
     });
   }
