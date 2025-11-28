@@ -22,6 +22,7 @@ import VulnerabilityFuzzer from "@/pages/tools/VulnerabilityFuzzer";
 import S3BucketFinder from "@/pages/tools/S3BucketFinder";
 import K8sEnumerator from "@/pages/tools/K8sEnumerator";
 import JWTDecoder from "@/pages/tools/JWTDecoder";
+import IPGeolocation from "@/pages/tools/IPGeolocation";
 
 const AppRouter = () => {
   return (
@@ -47,6 +48,7 @@ const AppRouter = () => {
         <Route path="/tools/s3-finder" element={<S3BucketFinder />} />
         <Route path="/tools/k8s-enum" element={<K8sEnumerator />} />
         <Route path="/tools/jwt" element={<JWTDecoder />} />
+        <Route path="/tools/ip-geo" element={<IPGeolocation />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

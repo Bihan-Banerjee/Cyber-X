@@ -16,6 +16,7 @@ import { performVulnerabilityFuzzing } from '../scanners/vulnerabilityFuzzer.js'
 import { performS3BucketFinding } from '../scanners/s3BucketFinder.js';
 import { performK8sEnumeration } from '../scanners/k8sEnumerator.js';
 import { decodeJWT } from '../scanners/jwtDecoder.js';
+import { performIPGeolocation } from '../scanners/ipGeolocation.js';
 
 const router = express.Router();
 
@@ -503,6 +504,25 @@ router.post('/jwt-decode', async (req, res) => {
     console.error('JWT decode error:', error);
     res.status(500).json({
       error: 'JWT decoding failed',
+      message: error.message,
+    });
+  }
+});
+
+// IP Geolocation Route
+router.post('/ip-geo', async (req, res) => {
+  try {
+    const { ip } = req.body;
+
+    const targetIP = ip && ip !== 'auto' ? ip : 'auto';
+
+    const result = await performIPGeolocation(targetIP);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('IP geolocation error:', error);
+    res.status(500).json({
+      error: 'IP geolocation lookup failed',
       message: error.message,
     });
   }
