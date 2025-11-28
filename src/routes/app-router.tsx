@@ -14,6 +14,7 @@ import SubdomainEnumeration from "@/pages/tools/SubdomainEnumeration";
 import DNSRecon from "@/pages/tools/DNSRecon";
 import APIScanner from "@/pages/tools/APIScanner";
 import EmailBreachChecker from "../pages/tools/EmailBreachChecker";
+import HashCracker from "@/pages/tools/HashCracker";
 
 const AppRouter = () => {
   return (
@@ -29,7 +30,7 @@ const AppRouter = () => {
         <Route path="/tools/subdomains" element={<SubdomainEnumeration />} />
         <Route path="/tools/dns-recon" element={<DNSRecon />} />
         <Route path="/tools/api-scanner" element={<APIScanner />} />
-        <Route path="/tools/hash-tool" element={<HashTool />} />
+        <Route path="/tools/hash-cracker" element={<HashCracker />} />
         <Route path="/tools/breach-check" element={<EmailBreachChecker />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />

@@ -7,6 +7,7 @@ import { performSubdomainEnumeration } from '../scanners/subdomainEnumeration.js
 import { performDNSRecon } from '../scanners/dnsRecon.js';
 import { performAPIScan } from '../scanners/apiScanner.js';
 import { performBreachCheck } from '../scanners/breachChecker.js';
+import { performHashCracking } from '../scanners/hashCracker.js';
 
 const router = express.Router();
 
@@ -264,5 +265,31 @@ router.post('/breach-check', async (req, res) => {
   }
 });
 
+// Hash Cracker Route
+router.post('/hash-crack', async (req, res) => {
+  try {
+    const { hashes, timeoutMs = 30000 } = req.body;
+
+    if (!hashes || !Array.isArray(hashes) || hashes.length === 0) {
+      return res.status(400).json({ error: 'Invalid hashes parameter' });
+    }
+
+    if (hashes.length > 100) {
+      return res.status(400).json({ error: 'Maximum 100 hashes per request' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+
+    const result = await performHashCracking(hashes, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Hash crack error:', error);
+    res.status(500).json({
+      error: 'Hash cracking failed',
+      message: error.message,
+    });
+  }
+});
 
 export default router;
