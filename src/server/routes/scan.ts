@@ -9,6 +9,7 @@ import { performAPIScan } from '../scanners/apiScanner.js';
 import { performBreachCheck } from '../scanners/breachChecker.js';
 import { performHashCracking } from '../scanners/hashCracker.js';
 import { performDirectoryFuzzing } from '../scanners/directoryFuzzer.js';
+import { performAuthCheck } from '../scanners/authChecker.js';
 
 const router = express.Router();
 
@@ -311,6 +312,36 @@ router.post('/dir-fuzz', async (req, res) => {
     console.error('Directory fuzzing error:', error);
     res.status(500).json({
       error: 'Directory fuzzing failed',
+      message: error.message,
+    });
+  }
+});
+
+// Authentication Security Check Route
+router.post('/auth-check', async (req, res) => {
+  try {
+    const { target, username, password, timeoutMs = 15000 } = req.body;
+
+    if (!target || typeof target !== 'string') {
+      return res.status(400).json({ error: 'Invalid target parameter' });
+    }
+
+    // Basic URL validation
+    try {
+      new URL(target);
+    } catch {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 30000);
+
+    const result = await performAuthCheck(target, username, password, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Auth check error:', error);
+    res.status(500).json({
+      error: 'Authentication check failed',
       message: error.message,
     });
   }

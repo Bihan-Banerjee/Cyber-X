@@ -16,7 +16,7 @@ import APIScanner from "@/pages/tools/APIScanner";
 import EmailBreachChecker from "../pages/tools/EmailBreachChecker";
 import HashCracker from "@/pages/tools/HashCracker";
 import DirectoryFuzzer from "@/pages/tools/DirectoryFuzzer";
-
+import BrokenAuthChecker from "@/pages/tools/BrokenAuthChecker";
 const AppRouter = () => {
   return (
     <Layout>
@@ -34,6 +34,7 @@ const AppRouter = () => {
         <Route path="/tools/hash-cracker" element={<HashCracker />} />
         <Route path="/tools/breach-check" element={<EmailBreachChecker />} />
         <Route path="/tools/dir-fuzzer" element={<DirectoryFuzzer />} />
+        <Route path="/tools/broken-auth" element={<BrokenAuthChecker />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
