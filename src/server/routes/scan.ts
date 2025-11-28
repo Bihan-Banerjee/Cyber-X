@@ -13,6 +13,7 @@ import { performAuthCheck } from '../scanners/authChecker.js';
 import { performContainerScan } from '../scanners/containerScanner.js';
 import { processCipher, analyzeCipher } from '../scanners/cipherTool.js';
 import { performVulnerabilityFuzzing } from '../scanners/vulnerabilityFuzzer.js';
+import { performS3BucketFinding } from '../scanners/s3BucketFinder.js';
 
 const router = express.Router();
 
@@ -438,5 +439,27 @@ router.post('/vuln-fuzz', async (req, res) => {
   }
 });
 
+// S3 Bucket Finder Route
+router.post('/s3-finder', async (req, res) => {
+  try {
+    const { keyword, timeoutMs = 60000 } = req.body;
+
+    if (!keyword || typeof keyword !== 'string') {
+      return res.status(400).json({ error: 'Invalid keyword parameter' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
+
+    const result = await performS3BucketFinding(keyword, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('S3 bucket finding error:', error);
+    res.status(500).json({
+      error: 'S3 bucket finding failed',
+      message: error.message,
+    });
+  }
+});
 
 export default router;

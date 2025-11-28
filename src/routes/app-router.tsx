@@ -19,6 +19,7 @@ import DirectoryFuzzer from "@/pages/tools/DirectoryFuzzer";
 import BrokenAuthChecker from "@/pages/tools/BrokenAuthChecker";
 import ContainerScanner from "@/pages/tools/ContainerScanner";
 import VulnerabilityFuzzer from "@/pages/tools/VulnerabilityFuzzer";
+import S3BucketFinder from "@/pages/tools/S3BucketFinder";
 
 const AppRouter = () => {
   return (
@@ -41,6 +42,7 @@ const AppRouter = () => {
         <Route path="/tools/container-scan" element={<ContainerScanner />} />
         <Route path="/tools/ciphers" element={<CipherTool />} />
         <Route path="/tools/vuln-fuzzer" element={<VulnerabilityFuzzer />} />
+        <Route path="/tools/s3-finder" element={<S3BucketFinder />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
