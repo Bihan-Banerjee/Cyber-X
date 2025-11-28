@@ -20,6 +20,7 @@ import BrokenAuthChecker from "@/pages/tools/BrokenAuthChecker";
 import ContainerScanner from "@/pages/tools/ContainerScanner";
 import VulnerabilityFuzzer from "@/pages/tools/VulnerabilityFuzzer";
 import S3BucketFinder from "@/pages/tools/S3BucketFinder";
+import K8sEnumerator from "@/pages/tools/K8sEnumerator";
 
 const AppRouter = () => {
   return (
@@ -43,6 +44,7 @@ const AppRouter = () => {
         <Route path="/tools/ciphers" element={<CipherTool />} />
         <Route path="/tools/vuln-fuzzer" element={<VulnerabilityFuzzer />} />
         <Route path="/tools/s3-finder" element={<S3BucketFinder />} />
+        <Route path="/tools/k8s-enum" element={<K8sEnumerator />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

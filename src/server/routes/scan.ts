@@ -14,6 +14,7 @@ import { performContainerScan } from '../scanners/containerScanner.js';
 import { processCipher, analyzeCipher } from '../scanners/cipherTool.js';
 import { performVulnerabilityFuzzing } from '../scanners/vulnerabilityFuzzer.js';
 import { performS3BucketFinding } from '../scanners/s3BucketFinder.js';
+import { performK8sEnumeration } from '../scanners/k8sEnumerator.js';
 
 const router = express.Router();
 
@@ -457,6 +458,29 @@ router.post('/s3-finder', async (req, res) => {
     console.error('S3 bucket finding error:', error);
     res.status(500).json({
       error: 'S3 bucket finding failed',
+      message: error.message,
+    });
+  }
+});
+
+// K8s Enumerator Route
+router.post('/k8s-enum', async (req, res) => {
+  try {
+    const { apiEndpoint, token, timeoutMs = 30000 } = req.body;
+
+    if (!apiEndpoint || typeof apiEndpoint !== 'string') {
+      return res.status(400).json({ error: 'Invalid apiEndpoint parameter' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+
+    const result = await performK8sEnumeration(apiEndpoint, token, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('K8s enumeration error:', error);
+    res.status(500).json({
+      error: 'K8s enumeration failed',
       message: error.message,
     });
   }
