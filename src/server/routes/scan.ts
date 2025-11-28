@@ -18,6 +18,7 @@ import { performK8sEnumeration } from '../scanners/k8sEnumerator.js';
 import { decodeJWT } from '../scanners/jwtDecoder.js';
 import { performIPGeolocation } from '../scanners/ipGeolocation.js';
 import { performReverseIPLookup } from '../scanners/reverseIPLookup.js';
+import { processCrypto, generateKeys } from '../scanners/rsaesEncryption.js';
 
 const router = express.Router();
 
@@ -555,6 +556,34 @@ router.post('/reverse-ip', async (req, res) => {
     console.error('Reverse IP lookup error:', error);
     res.status(500).json({
       error: 'Reverse IP lookup failed',
+      message: error.message,
+    });
+  }
+});
+
+// Crypto Process Route
+router.post('/crypto-process', async (req, res) => {
+  try {
+    const result = await processCrypto(req.body);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Crypto process error:', error);
+    res.status(500).json({
+      error: 'Encryption/Decryption failed',
+      message: error.message,
+    });
+  }
+});
+
+// Crypto Generate Keys Route
+router.post('/crypto-generate-keys', async (req, res) => {
+  try {
+    const result = await generateKeys(req.body);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Key generation error:', error);
+    res.status(500).json({
+      error: 'Key generation failed',
       message: error.message,
     });
   }

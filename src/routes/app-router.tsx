@@ -24,6 +24,7 @@ import K8sEnumerator from "@/pages/tools/K8sEnumerator";
 import JWTDecoder from "@/pages/tools/JWTDecoder";
 import IPGeolocation from "@/pages/tools/IPGeolocation";
 import ReverseIPLookup from "@/pages/tools/ReverseIPLookup";
+import RSAESEncryption from "@/pages/tools/RSAESEncryption";
 
 const AppRouter = () => {
   return (
@@ -51,6 +52,7 @@ const AppRouter = () => {
         <Route path="/tools/jwt" element={<JWTDecoder />} />
         <Route path="/tools/ip-geo" element={<IPGeolocation />} />
         <Route path="/tools/reverse-ip" element={<ReverseIPLookup />} />
+        <Route path="/tools/rsa-aes" element={<RSAESEncryption />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
