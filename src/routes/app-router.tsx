@@ -18,6 +18,8 @@ import HashCracker from "@/pages/tools/HashCracker";
 import DirectoryFuzzer from "@/pages/tools/DirectoryFuzzer";
 import BrokenAuthChecker from "@/pages/tools/BrokenAuthChecker";
 import ContainerScanner from "@/pages/tools/ContainerScanner";
+import VulnerabilityFuzzer from "@/pages/tools/VulnerabilityFuzzer";
+
 const AppRouter = () => {
   return (
     <Layout>
@@ -38,6 +40,7 @@ const AppRouter = () => {
         <Route path="/tools/broken-auth" element={<BrokenAuthChecker />} />
         <Route path="/tools/container-scan" element={<ContainerScanner />} />
         <Route path="/tools/ciphers" element={<CipherTool />} />
+        <Route path="/tools/vuln-fuzzer" element={<VulnerabilityFuzzer />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

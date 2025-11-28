@@ -12,6 +12,7 @@ import { performDirectoryFuzzing } from '../scanners/directoryFuzzer.js';
 import { performAuthCheck } from '../scanners/authChecker.js';
 import { performContainerScan } from '../scanners/containerScanner.js';
 import { processCipher, analyzeCipher } from '../scanners/cipherTool.js';
+import { performVulnerabilityFuzzing } from '../scanners/vulnerabilityFuzzer.js';
 
 const router = express.Router();
 
@@ -413,5 +414,29 @@ router.post('/cipher-analyze', async (req, res) => {
     });
   }
 });
+
+// Vulnerability Fuzzer Route
+router.post('/vuln-fuzz', async (req, res) => {
+  try {
+    const { target, timeoutMs = 60000 } = req.body;
+
+    if (!target || typeof target !== 'string') {
+      return res.status(400).json({ error: 'Invalid target parameter' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
+
+    const result = await performVulnerabilityFuzzing(target, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Vulnerability fuzzing error:', error);
+    res.status(500).json({
+      error: 'Vulnerability fuzzing failed',
+      message: error.message,
+    });
+  }
+});
+
 
 export default router;
