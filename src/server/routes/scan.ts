@@ -15,6 +15,7 @@ import { processCipher, analyzeCipher } from '../scanners/cipherTool.js';
 import { performVulnerabilityFuzzing } from '../scanners/vulnerabilityFuzzer.js';
 import { performS3BucketFinding } from '../scanners/s3BucketFinder.js';
 import { performK8sEnumeration } from '../scanners/k8sEnumerator.js';
+import { decodeJWT } from '../scanners/jwtDecoder.js';
 
 const router = express.Router();
 
@@ -481,6 +482,27 @@ router.post('/k8s-enum', async (req, res) => {
     console.error('K8s enumeration error:', error);
     res.status(500).json({
       error: 'K8s enumeration failed',
+      message: error.message,
+    });
+  }
+});
+
+// JWT Decoder Route
+router.post('/jwt-decode', async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Invalid token parameter' });
+    }
+
+    const result = await decodeJWT(token);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('JWT decode error:', error);
+    res.status(500).json({
+      error: 'JWT decoding failed',
       message: error.message,
     });
   }
