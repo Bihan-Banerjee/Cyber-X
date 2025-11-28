@@ -11,6 +11,7 @@ import { performHashCracking } from '../scanners/hashCracker.js';
 import { performDirectoryFuzzing } from '../scanners/directoryFuzzer.js';
 import { performAuthCheck } from '../scanners/authChecker.js';
 import { performContainerScan } from '../scanners/containerScanner.js';
+import { processCipher, analyzeCipher } from '../scanners/cipherTool.js';
 
 const router = express.Router();
 
@@ -366,6 +367,48 @@ router.post('/container-scan', async (req, res) => {
     console.error('Container scan error:', error);
     res.status(500).json({
       error: 'Container scan failed',
+      message: error.message,
+    });
+  }
+});
+
+// Cipher Process Route
+router.post('/cipher-process', async (req, res) => {
+  try {
+    const { cipherType, operation, input, key } = req.body;
+
+    if (!cipherType || !operation || !input) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    const result = await processCipher(cipherType, operation, input, key);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Cipher process error:', error);
+    res.status(500).json({
+      error: 'Cipher processing failed',
+      message: error.message,
+    });
+  }
+});
+
+// Cipher Analyze Route
+router.post('/cipher-analyze', async (req, res) => {
+  try {
+    const { input } = req.body;
+
+    if (!input) {
+      return res.status(400).json({ error: 'Missing input parameter' });
+    }
+
+    const result = await analyzeCipher(input);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Cipher analyze error:', error);
+    res.status(500).json({
+      error: 'Cipher analysis failed',
       message: error.message,
     });
   }

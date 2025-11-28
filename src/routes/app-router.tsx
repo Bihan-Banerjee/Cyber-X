@@ -5,7 +5,7 @@ import Dashboard from "@/pages/Dashboard";
 import Tools from "@/pages/Tools";
 import Honeypots from "@/pages/Honeypots";
 import PortScanner from "@/pages/tools/PortScanner";
-import HashTool from "@/pages/tools/HashTool";
+import CipherTool from "@/pages/tools/CipherTool";
 import NotFound from "@/pages/NotFound";
 import OSFingerprint from "@/pages/tools/OSFingerprint";
 import WHOISLookup from "@/pages/tools/WHOISLookup";
@@ -37,6 +37,7 @@ const AppRouter = () => {
         <Route path="/tools/dir-fuzzer" element={<DirectoryFuzzer />} />
         <Route path="/tools/broken-auth" element={<BrokenAuthChecker />} />
         <Route path="/tools/container-scan" element={<ContainerScanner />} />
+        <Route path="/tools/ciphers" element={<CipherTool />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
