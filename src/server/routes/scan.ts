@@ -19,6 +19,7 @@ import { decodeJWT } from '../scanners/jwtDecoder.js';
 import { performIPGeolocation } from '../scanners/ipGeolocation.js';
 import { performReverseIPLookup } from '../scanners/reverseIPLookup.js';
 import { processCrypto, generateKeys } from '../scanners/rsaesEncryption.js';
+import { analyzePackets } from '../scanners/packetAnalyzer.js';
 
 const router = express.Router();
 
@@ -584,6 +585,25 @@ router.post('/crypto-generate-keys', async (req, res) => {
     console.error('Key generation error:', error);
     res.status(500).json({
       error: 'Key generation failed',
+      message: error.message,
+    });
+  }
+});
+
+// Packet Analyzer Route
+router.post('/packet-analyze', async (req, res) => {
+  try {
+    const { pcapData, timeoutMs = 30000 } = req.body;
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+
+    const result = await analyzePackets(pcapData, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Packet analysis error:', error);
+    res.status(500).json({
+      error: 'Packet analysis failed',
       message: error.message,
     });
   }

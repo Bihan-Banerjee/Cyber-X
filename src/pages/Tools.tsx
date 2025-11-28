@@ -218,7 +218,7 @@ const Tools = () => {
     {
       icon: Network,
       name: "Packet Analyzer",
-      description: "Capture and analyze network traffic packets",
+      description: "Capture and analyze network traffic packets (Work in Progress)",
       path: "/tools/packet-analyzer",
       category: "Network",
     },
