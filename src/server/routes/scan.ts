@@ -8,6 +8,7 @@ import { performDNSRecon } from '../scanners/dnsRecon.js';
 import { performAPIScan } from '../scanners/apiScanner.js';
 import { performBreachCheck } from '../scanners/breachChecker.js';
 import { performHashCracking } from '../scanners/hashCracker.js';
+import { performDirectoryFuzzing } from '../scanners/directoryFuzzer.js';
 
 const router = express.Router();
 
@@ -287,6 +288,29 @@ router.post('/hash-crack', async (req, res) => {
     console.error('Hash crack error:', error);
     res.status(500).json({
       error: 'Hash cracking failed',
+      message: error.message,
+    });
+  }
+});
+
+// Directory Fuzzer Route
+router.post('/dir-fuzz', async (req, res) => {
+  try {
+    const { target, timeoutMs = 60000 } = req.body;
+
+    if (!target || typeof target !== 'string') {
+      return res.status(400).json({ error: 'Invalid target parameter' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
+
+    const result = await performDirectoryFuzzing(target, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Directory fuzzing error:', error);
+    res.status(500).json({
+      error: 'Directory fuzzing failed',
       message: error.message,
     });
   }

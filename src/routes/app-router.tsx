@@ -15,6 +15,7 @@ import DNSRecon from "@/pages/tools/DNSRecon";
 import APIScanner from "@/pages/tools/APIScanner";
 import EmailBreachChecker from "../pages/tools/EmailBreachChecker";
 import HashCracker from "@/pages/tools/HashCracker";
+import DirectoryFuzzer from "@/pages/tools/DirectoryFuzzer";
 
 const AppRouter = () => {
   return (
@@ -32,6 +33,7 @@ const AppRouter = () => {
         <Route path="/tools/api-scanner" element={<APIScanner />} />
         <Route path="/tools/hash-cracker" element={<HashCracker />} />
         <Route path="/tools/breach-check" element={<EmailBreachChecker />} />
+        <Route path="/tools/dir-fuzzer" element={<DirectoryFuzzer />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
