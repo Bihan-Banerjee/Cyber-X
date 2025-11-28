@@ -23,6 +23,7 @@ import S3BucketFinder from "@/pages/tools/S3BucketFinder";
 import K8sEnumerator from "@/pages/tools/K8sEnumerator";
 import JWTDecoder from "@/pages/tools/JWTDecoder";
 import IPGeolocation from "@/pages/tools/IPGeolocation";
+import ReverseIPLookup from "@/pages/tools/ReverseIPLookup";
 
 const AppRouter = () => {
   return (
@@ -49,6 +50,7 @@ const AppRouter = () => {
         <Route path="/tools/k8s-enum" element={<K8sEnumerator />} />
         <Route path="/tools/jwt" element={<JWTDecoder />} />
         <Route path="/tools/ip-geo" element={<IPGeolocation />} />
+        <Route path="/tools/reverse-ip" element={<ReverseIPLookup />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

@@ -17,6 +17,7 @@ import { performS3BucketFinding } from '../scanners/s3BucketFinder.js';
 import { performK8sEnumeration } from '../scanners/k8sEnumerator.js';
 import { decodeJWT } from '../scanners/jwtDecoder.js';
 import { performIPGeolocation } from '../scanners/ipGeolocation.js';
+import { performReverseIPLookup } from '../scanners/reverseIPLookup.js';
 
 const router = express.Router();
 
@@ -523,6 +524,37 @@ router.post('/ip-geo', async (req, res) => {
     console.error('IP geolocation error:', error);
     res.status(500).json({
       error: 'IP geolocation lookup failed',
+      message: error.message,
+    });
+  }
+});
+
+// Reverse IP Lookup Route
+router.post('/reverse-ip', async (req, res) => {
+  try {
+    const { ip, timeoutMs = 30000 } = req.body;
+
+    if (!ip || typeof ip !== 'string') {
+      return res.status(400).json({ error: 'Invalid IP address parameter' });
+    }
+
+    // Basic IP validation
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
+    
+    if (!ipv4Regex.test(ip) && !ipv6Regex.test(ip)) {
+      return res.status(400).json({ error: 'Invalid IP address format' });
+    }
+
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+
+    const result = await performReverseIPLookup(ip, safeTimeout);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Reverse IP lookup error:', error);
+    res.status(500).json({
+      error: 'Reverse IP lookup failed',
       message: error.message,
     });
   }
