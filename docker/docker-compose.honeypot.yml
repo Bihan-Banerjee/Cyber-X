@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # Cowrie SSH/Telnet Honeypot
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cyberx-cowrie
+    ports:
+      - "2222:2222"  # SSH
+      - "2223:2223"  # Telnet
+    volumes:
+      - ./cowrie/etc:/cowrie/cowrie-git/etc
+      - ./cowrie/var:/cowrie/cowrie-git/var
+    environment:
+      - COWRIE_HOSTNAME=cyberx-ssh-server
+    networks:
+      - honeypot_net
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Dionaea Multi-Protocol Honeypot
+  dionaea:
+    image: dinotools/dionaea:latest
+    container_name: cyberx-dionaea
+    ports:
+      - "21:21"     # FTP
+      - "42:42"     # TFTP
+      - "135:135"   # MSRPC
+      - "4445:445"   # SMB
+      - "1433:1433" # MSSQL
+      - "3306:3306" # MySQL
+      - "5060:5060" # SIP
+    volumes:
+      - ./dionaea/log:/var/log/dionaea
+      - ./dionaea/bistreams:/opt/dionaea/var/dionaea/bistreams
+    networks:
+      - honeypot_net
+    restart: unless-stopped
+
+  # Zeek Network Monitor
+  zeek:
+    image: zeek/zeek:latest
+    container_name: cyberx-zeek
+    volumes:
+      - ./zeek/logs:/usr/local/zeek/logs
+      - ./zeek/scripts:/usr/local/zeek/share/zeek/site
+    networks:
+      - honeypot_net
+    command: zeekctl deploy
+    restart: unless-stopped
+
+  # Elasticsearch for Log Storage
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: cyberx-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elastic_data:/usr/share/elasticsearch/data
+    networks:
+      - honeypot_net
+    restart: unless-stopped
+
+  # Kibana for Visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: cyberx-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - honeypot_net
+    restart: unless-stopped
+
+  # Logstash for Log Processing
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: cyberx-logstash
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logstash/config:/usr/share/logstash/config
+      - ./cowrie/var/log:/var/log/cowrie:ro
+      - ./dionaea/log:/var/log/dionaea:ro
+      - ./zeek/logs:/var/log/zeek:ro
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
+    depends_on:
+      - elasticsearch
+    networks:
+      - honeypot_net
+    restart: unless-stopped
+
+networks:
+  honeypot_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  elastic_data:
+    driver: local

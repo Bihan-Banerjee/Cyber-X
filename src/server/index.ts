@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import scanRoutes from './routes/scan';
+import honeypotRoutes from './routes/honeypot.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,3 +27,5 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🔒 Security scanner API running on port ${PORT}`);
 });
+
+app.use('/api/honeypot', honeypotRoutes);

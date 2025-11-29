@@ -1,0 +1,2 @@
+- pipeline.id: cowrie-pipeline
+  path.config: "/usr/share/logstash/pipeline/cowrie.conf"

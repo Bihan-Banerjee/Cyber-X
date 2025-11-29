@@ -3,7 +3,7 @@ import Layout from "@/components/layout/Layout";
 import Home from "@/pages/Home";
 import Dashboard from "@/pages/Dashboard";
 import Tools from "@/pages/Tools";
-import Honeypots from "@/pages/Honeypots";
+import HoneypotMonitor from "../pages/HoneypotMonitor";
 import PortScanner from "@/pages/tools/PortScanner";
 import CipherTool from "@/pages/tools/CipherTool";
 import NotFound from "@/pages/NotFound";
@@ -69,7 +69,7 @@ const AppRouter = () => {
         <Route path="/tools/stego-video" element={<VideoSteganography />} />
         <Route path="/tools/google-dorks" element={<GoogleDorkGenerator />} />
         <Route path="/tools/packet-capturer" element={<PacketCapturer />} />
-        <Route path="/honeypots" element={<Honeypots />} />
+        <Route path="/honeypots" element={<HoneypotMonitor />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Layout>
