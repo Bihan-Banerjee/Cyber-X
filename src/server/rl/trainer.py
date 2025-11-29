@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 
 from honeypot_env import HoneypotEnv
+from honeypot_env_sim import HoneypotEnvSimulated
 from attacker_agent import AttackerAgent, AttackerCallback
 from defender_agent import DefenderAgent, DefenderCallback
 
@@ -26,21 +27,24 @@ class SelfPlayTrainer:
         save_dir: str = './models'
     ):
         # Create environments
-        self.attacker_env = HoneypotEnv(
-            mode='attacker',
-            elasticsearch_url=elasticsearch_url,
-            honeypot_host=honeypot_host,
-            honeypot_port=honeypot_port,
-            max_steps=max_steps
-        )
-        
-        self.defender_env = HoneypotEnv(
-            mode='defender',
-            elasticsearch_url=elasticsearch_url,
-            honeypot_host=honeypot_host,
-            honeypot_port=honeypot_port,
-            max_steps=max_steps
-        )
+#        self.attacker_env = HoneypotEnv(
+#            mode='attacker',
+#            elasticsearch_url=elasticsearch_url,
+#            honeypot_host=honeypot_host,
+#            honeypot_port=honeypot_port,
+#            max_steps=max_steps
+#        )
+#        
+#        self.defender_env = HoneypotEnv(
+#            mode='defender',
+#            elasticsearch_url=elasticsearch_url,
+#            honeypot_host=honeypot_host,
+#            honeypot_port=honeypot_port,
+#            max_steps=max_steps
+#        )
+
+        self.attacker_env = HoneypotEnvSimulated(mode='attacker', max_steps=max_steps)
+        self.defender_env = HoneypotEnvSimulated(mode='defender', max_steps=max_steps)
         
         # Create agents
         self.attacker = AttackerAgent(self.attacker_env)
