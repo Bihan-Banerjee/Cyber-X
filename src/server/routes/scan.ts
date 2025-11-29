@@ -20,8 +20,15 @@ import { performIPGeolocation } from '../scanners/ipGeolocation.js';
 import { performReverseIPLookup } from '../scanners/reverseIPLookup.js';
 import { processCrypto, generateKeys } from '../scanners/rsaesEncryption.js';
 import { analyzePackets } from '../scanners/packetAnalyzer.js';
+import multer from 'multer';
+import { extractImageMetadata } from '../scanners/imageMetaDataExtractor.js';
+import { hideDataInImage, extractDataFromImage } from '../scanners/imageSteganography.js';
+import { hideDataInAudio, extractDataFromAudio } from '../scanners/audioSteganography.js';
 
 const router = express.Router();
+
+// Configure multer for memory storage
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Validation helper
 function isValidTarget(target: string): boolean {
@@ -608,5 +615,131 @@ router.post('/packet-analyze', async (req, res) => {
     });
   }
 });
+
+// Image Metadata Extractor Route
+router.post('/image-metadata', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+
+    const result = await extractImageMetadata(req.file.buffer, req.file.originalname);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Image metadata extraction error:', error);
+    res.status(500).json({
+      error: 'Metadata extraction failed',
+      message: error.message,
+    });
+  }
+});
+
+// Steganography Hide Route
+router.post('/stego-hide', upload.single('coverImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No cover image uploaded' });
+    }
+
+    const { secretMessage, password } = req.body;
+
+    if (!secretMessage) {
+      return res.status(400).json({ error: 'No secret message provided' });
+    }
+
+    const result = await hideDataInImage(
+      req.file.buffer,
+      secretMessage,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Steganography hide error:', error);
+    res.status(500).json({
+      error: 'Failed to hide data',
+      message: error.message,
+    });
+  }
+});
+
+// Steganography Extract Route
+router.post('/stego-extract', upload.single('stegoImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No stego image uploaded' });
+    }
+
+    const { password } = req.body;
+
+    const result = await extractDataFromImage(
+      req.file.buffer,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Steganography extract error:', error);
+    res.status(500).json({
+      error: 'Failed to extract data',
+      message: error.message,
+    });
+  }
+});
+
+// Audio Steganography Hide Route
+router.post('/audio-stego-hide', upload.single('coverAudio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No cover audio uploaded' });
+    }
+
+    const { secretMessage, password } = req.body;
+
+    if (!secretMessage) {
+      return res.status(400).json({ error: 'No secret message provided' });
+    }
+
+    const result = await hideDataInAudio(
+      req.file.buffer,
+      secretMessage,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Audio steganography hide error:', error);
+    res.status(500).json({
+      error: 'Failed to hide data',
+      message: error.message,
+    });
+  }
+});
+
+// Audio Steganography Extract Route
+router.post('/audio-stego-extract', upload.single('stegoAudio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No stego audio uploaded' });
+    }
+
+    const { password } = req.body;
+
+    const result = await extractDataFromAudio(
+      req.file.buffer,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Audio steganography extract error:', error);
+    res.status(500).json({
+      error: 'Failed to extract data',
+      message: error.message,
+    });
+  }
+});
+
 
 export default router;

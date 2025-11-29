@@ -26,6 +26,7 @@ import {
   Music,
   FileSearch,
   FileImage,
+  Video,
   Mail,
   SearchCode,
   Network,
@@ -188,10 +189,17 @@ const Tools = () => {
       category: "Forensics",
     },
     {
+      icon: Video,
+      name: "Video Steganography",
+      description: "Extract hidden data from video files",
+      path: "/tools/stego-video",
+      category: "Forensics",
+    },
+    {
       icon: FileSearch,
-      name: "Steganography Extractor",
-      description: "Extract hidden data from media files",
-      path: "/tools/stego-extract",
+      name: "Document Steganography",
+      description: "Extract hidden data from document files",
+      path: "/tools/stego-doc",
       category: "Forensics",
     },
     {

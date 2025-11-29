@@ -26,6 +26,9 @@ import IPGeolocation from "@/pages/tools/IPGeolocation";
 import ReverseIPLookup from "@/pages/tools/ReverseIPLookup";
 import RSAESEncryption from "@/pages/tools/RSAESEncryption";
 import PacketAnalyzer from "@/pages/tools/PacketAnalyzer";
+import ImageMetadataExtractor from "@/pages/tools/ImageMetaDataExtractor";
+import ImageSteganography from "@/pages/tools/ImageSteganography";
+import AudioSteganography from "@/pages/tools/AudioSteganography";
 
 const AppRouter = () => {
   return (
@@ -55,6 +58,9 @@ const AppRouter = () => {
         <Route path="/tools/reverse-ip" element={<ReverseIPLookup />} />
         <Route path="/tools/rsa-aes" element={<RSAESEncryption />} />
         <Route path="/tools/packet-analyzer" element={<PacketAnalyzer />} />
+        <Route path="/tools/image-exif" element={<ImageMetadataExtractor />} />
+        <Route path="/tools/stego-image" element={<ImageSteganography />} />
+        <Route path="/tools/stego-audio" element={<AudioSteganography />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
