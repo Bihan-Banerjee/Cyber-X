@@ -226,8 +226,14 @@ const Tools = () => {
     {
       icon: Network,
       name: "Packet Analyzer",
-      description: "Capture and analyze network traffic packets (Work in Progress)",
+      description: "Analyze network traffic packets (Work in Progress)",
       path: "/tools/packet-analyzer",
+      category: "Network",
+    },{
+      icon: Network,
+      name: "Packet Capturer",
+      description: "Capture and download network traffic packets",
+      path: "/tools/packet-capturer",
       category: "Network",
     },
   ];

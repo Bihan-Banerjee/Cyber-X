@@ -27,6 +27,15 @@ import { hideDataInAudio, extractDataFromAudio } from '../scanners/audioSteganog
 import { hideDataInDocument, extractDataFromDocument } from '../scanners/documentSteganography.js';
 import { hideDataInVideo, extractDataFromVideo } from '../scanners/videoSteganography.js';
 import { performOSINTSearch } from '../scanners/osintSearch.js';
+import {
+  getNetworkInterfaces,
+  startPacketCapture,
+  stopPacketCapture,
+  getCapturePackets,
+  generatePcapFile,
+} from '../scanners/packetCapturer.js';
+
+
 
 const router = express.Router();
 
@@ -868,6 +877,85 @@ router.post('/osint-search', async (req, res) => {
     console.error('OSINT search error:', error);
     res.status(500).json({
       error: 'OSINT search failed',
+      message: error.message,
+    });
+  }
+});
+
+// Get Network Interfaces
+router.get('/network-interfaces', async (req, res) => {
+  try {
+    const result = getNetworkInterfaces();
+    res.json(result);
+  } catch (error: any) {
+    console.error('Network interfaces error:', error);
+    res.status(500).json({
+      error: 'Failed to get network interfaces',
+      message: error.message,
+    });
+  }
+});
+
+// Start Packet Capture
+router.post('/start-capture', async (req, res) => {
+  try {
+    const { interfaceName, filter } = req.body;
+
+    if (!interfaceName) {
+      return res.status(400).json({ error: 'Interface name is required' });
+    }
+
+    const result = startPacketCapture(interfaceName, filter);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Start capture error:', error);
+    res.status(500).json({
+      error: 'Failed to start capture',
+      message: error.message,
+    });
+  }
+});
+
+// Stop Packet Capture
+router.post('/stop-capture', async (req, res) => {
+  try {
+    const result = stopPacketCapture();
+    res.json(result);
+  } catch (error: any) {
+    console.error('Stop capture error:', error);
+    res.status(500).json({
+      error: 'Failed to stop capture',
+      message: error.message,
+    });
+  }
+});
+
+// Get Captured Packets
+router.get('/capture-packets', async (req, res) => {
+  try {
+    const result = getCapturePackets();
+    res.json(result);
+  } catch (error: any) {
+    console.error('Get packets error:', error);
+    res.status(500).json({
+      error: 'Failed to get packets',
+      message: error.message,
+    });
+  }
+});
+
+// Download PCAP File
+router.get('/download-pcap', async (req, res) => {
+  try {
+    const pcapBuffer = generatePcapFile();
+
+    res.setHeader('Content-Type', 'application/vnd.tcpdump.pcap');
+    res.setHeader('Content-Disposition', 'attachment; filename="capture.pcap"');
+    res.send(pcapBuffer);
+  } catch (error: any) {
+    console.error('Download PCAP error:', error);
+    res.status(500).json({
+      error: 'Failed to download PCAP',
       message: error.message,
     });
   }
