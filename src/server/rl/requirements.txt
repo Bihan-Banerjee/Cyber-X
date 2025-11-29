@@ -1,0 +1,12 @@
+gymnasium==0.29.1
+stable-baselines3==2.1.0
+torch>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+tensorboard>=2.13.0
+flask>=2.3.0
+flask-cors>=4.0.0
+paramiko>=3.3.0
+elasticsearch>=8.9.0
