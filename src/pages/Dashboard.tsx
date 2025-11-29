@@ -2,6 +2,20 @@ import { useEffect, useState } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
 import { Activity, Shield, AlertTriangle, TrendingUp } from "lucide-react";
 
+interface ToolActivity {
+  toolName: string;
+  timestamp: string;
+  status: "success" | "warning" | "info";
+  message: string;
+}
+
+interface SystemResources {
+  cpu: number;
+  memory: number;
+  network: number;
+  disk: number;
+}
+
 const Dashboard = () => {
   const [stats, setStats] = useState({
     activeSystems: 12,
@@ -10,17 +24,67 @@ const Dashboard = () => {
     uptime: 99.8,
   });
 
+  const [recentTools, setRecentTools] = useState<ToolActivity[]>([]);
+  const [systemResources, setSystemResources] = useState<SystemResources>({
+    cpu: 0,
+    memory: 0,
+    network: 0,
+    disk: 0,
+  });
+
   useEffect(() => {
-    // Simulate live stats updates
-    const interval = setInterval(() => {
+    // Fetch initial data
+    fetchRecentTools();
+    fetchSystemResources();
+
+    // Update stats periodically
+    const statsInterval = setInterval(() => {
       setStats((prev) => ({
         ...prev,
         threatsDetected: prev.threatsDetected + Math.floor(Math.random() * 3),
       }));
     }, 5000);
 
-    return () => clearInterval(interval);
+    // Update recent tools every 5 seconds (increased from 3)
+    const toolsInterval = setInterval(() => {
+      fetchRecentTools();
+    }, 5000);
+
+    // Update system resources every 3 seconds (increased from 2)
+    const resourcesInterval = setInterval(() => {
+      fetchSystemResources();
+    }, 3000);
+
+    return () => {
+      clearInterval(statsInterval);
+      clearInterval(toolsInterval);
+      clearInterval(resourcesInterval);
+    };
   }, []);
+
+  const fetchRecentTools = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/scan/recent-tools");
+      if (response.ok) {
+        const data = await response.json();
+        setRecentTools(data.tools);
+      }
+    } catch (error) {
+      console.error("Failed to fetch recent tools:", error);
+    }
+  };
+
+  const fetchSystemResources = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/scan/system-resources");
+      if (response.ok) {
+        const data = await response.json();
+        setSystemResources(data.resources);
+      }
+    } catch (error) {
+      console.error("Failed to fetch system resources:", error);
+    }
+  };
 
   const StatCard = ({
     icon: Icon,
@@ -43,6 +107,21 @@ const Dashboard = () => {
     </div>
   );
 
+  const getRelativeTime = (timestamp: string) => {
+    const now = Date.now();
+    const time = new Date(timestamp).getTime();
+    const diff = now - time;
+
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (seconds < 60) return `${seconds} sec ago`;
+    if (minutes < 60) return `${minutes} min ago`;
+    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
+
   return (
     <div className="w-full max-w-6xl">
       {/* Stats Grid */}
@@ -63,41 +142,35 @@ const Dashboard = () => {
         <div className="space-y-6">
           <div className="border-b border-cyber-red/20 pb-4">
             <h3 className="text-lg font-bold text-cyber-cyan mb-3 tracking-wide">
-              RECENT ACTIVITY
+              RECENT TOOL ACTIVITY
             </h3>
             <div className="space-y-2">
-              <ActivityItem
-                status="success"
-                message="Port scan completed on 192.168.1.0/24"
-                time="2 min ago"
-              />
-              <ActivityItem
-                status="warning"
-                message="Vulnerability detected on SSH service"
-                time="5 min ago"
-              />
-              <ActivityItem
-                status="info"
-                message="Honeypot logged suspicious connection"
-                time="12 min ago"
-              />
-              <ActivityItem
-                status="success"
-                message="Security patch applied successfully"
-                time="1 hour ago"
-              />
+              {recentTools.length > 0 ? (
+                recentTools.slice(0, 5).map((activity, idx) => (
+                  <ActivityItem
+                    key={idx}
+                    status={activity.status}
+                    message={activity.message}
+                    time={getRelativeTime(activity.timestamp)}
+                  />
+                ))
+              ) : (
+                <div className="text-center text-gray-500 text-sm py-4">
+                  No recent tool activity
+                </div>
+              )}
             </div>
           </div>
 
           <div>
             <h3 className="text-lg font-bold text-cyber-cyan mb-3 tracking-wide">
-              SYSTEM HEALTH
+              SYSTEM RESOURCES
             </h3>
             <div className="space-y-3">
-              <HealthBar label="CPU USAGE" percentage={45} />
-              <HealthBar label="MEMORY" percentage={62} />
-              <HealthBar label="NETWORK" percentage={28} />
-              <HealthBar label="DISK I/O" percentage={71} />
+              <HealthBar label="CPU USAGE" percentage={systemResources.cpu} />
+              <HealthBar label="MEMORY" percentage={systemResources.memory} />
+              <HealthBar label="NETWORK" percentage={systemResources.network} />
+              <HealthBar label="DISK I/O" percentage={systemResources.disk} />
             </div>
           </div>
         </div>
@@ -132,19 +205,27 @@ const ActivityItem = ({
   );
 };
 
-const HealthBar = ({ label, percentage }: { label: string; percentage: number }) => (
-  <div>
-    <div className="flex justify-between text-xs text-gray-400 mb-1">
-      <span>{label}</span>
-      <span>{percentage}%</span>
+const HealthBar = ({ label, percentage }: { label: string; percentage: number }) => {
+  const getColor = (pct: number) => {
+    if (pct >= 80) return "from-red-500 to-red-600";
+    if (pct >= 60) return "from-yellow-500 to-orange-500";
+    return "from-cyber-cyan to-cyan-400";
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between text-xs text-gray-400 mb-1">
+        <span>{label}</span>
+        <span>{percentage.toFixed(1)}%</span>
+      </div>
+      <div className="h-2 bg-black/50 rounded-full overflow-hidden">
+        <div
+          className={`h-full bg-gradient-to-r ${getColor(percentage)} transition-all duration-500`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
     </div>
-    <div className="h-2 bg-black/50 rounded-full overflow-hidden">
-      <div
-        className="h-full bg-gradient-to-r from-cyber-red to-cyber-cyan transition-all duration-1000"
-        style={{ width: `${percentage}%` }}
-      />
-    </div>
-  </div>
-);
+  );
+};
 
 export default Dashboard;

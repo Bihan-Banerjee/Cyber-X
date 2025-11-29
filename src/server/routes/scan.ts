@@ -34,8 +34,9 @@ import {
   getCapturePackets,
   generatePcapFile,
 } from '../scanners/packetCapturer.js';
-
-
+import { logToolActivity, getRecentToolActivity } from '../utils/activityLogger.js';
+import { getSystemResources } from '../scanners/systemResources.js';
+import { createRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -81,6 +82,8 @@ router.post('/ports', async (req, res) => {
     const safeTimeout = Math.min(Math.max(timeoutMs, 500), 10000);
     const safeConcurrency = Math.min(Math.max(concurrency, 1), 100);
 
+    logToolActivity('Port Scanner', `Started scan on ${target}`, 'info');
+
     const results = await portScan({
       target,
       ports: portList,
@@ -91,6 +94,8 @@ router.post('/ports', async (req, res) => {
       retries: 2,
     });
 
+    logToolActivity('Port Scanner', `Completed scan on ${target} - Found ${results.openPorts.length} open ports`, 'success');
+
     res.json({
       target,
       totalPorts: portList.length,
@@ -98,6 +103,7 @@ router.post('/ports', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
+    logToolActivity('Port Scanner', `Scan failed: ${error.message}`, 'warning');
     console.error('Port scan error:', error);
     res.status(500).json({
       error: 'Scan failed',
@@ -121,10 +127,15 @@ router.post('/os-fingerprint', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
 
+    logToolActivity('OS Fingerprint', `Started fingerprinting ${target}`, 'info');
+
     const result = await performOSFingerprint(target, safeTimeout);
+
+    logToolActivity('OS Fingerprint', `Detected ${result.os} on ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('OS Fingerprint', `Fingerprint failed: ${error.message}`, 'warning');
     console.error('OS fingerprint error:', error);
     res.status(500).json({
       error: 'Fingerprint failed',
@@ -142,16 +153,20 @@ router.post('/whois', async (req, res) => {
       return res.status(400).json({ error: 'Invalid domain parameter' });
     }
 
-    // Basic domain validation
     const cleanDomain = domain.toLowerCase().trim();
     if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
       return res.status(400).json({ error: 'Invalid domain format' });
     }
 
+    logToolActivity('WHOIS Lookup', `Querying ${cleanDomain}`, 'info');
+
     const result = await performWHOISLookup(cleanDomain);
+
+    logToolActivity('WHOIS Lookup', `Completed lookup for ${cleanDomain}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('WHOIS Lookup', `Lookup failed: ${error.message}`, 'warning');
     console.error('WHOIS lookup error:', error);
     res.status(500).json({
       error: 'WHOIS lookup failed',
@@ -175,10 +190,15 @@ router.post('/service-detect', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
 
+    logToolActivity('Service Detection', `Detecting services on ${target}`, 'info');
+
     const result = await performServiceDetection(target, ports, safeTimeout);
+
+    logToolActivity('Service Detection', `Detected ${result.services.length} services on ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Service Detection', `Detection failed: ${error.message}`, 'warning');
     console.error('Service detection error:', error);
     res.status(500).json({
       error: 'Service detection failed',
@@ -196,7 +216,6 @@ router.post('/subdomains', async (req, res) => {
       return res.status(400).json({ error: 'Invalid domain parameter' });
     }
 
-    // Basic domain validation
     const cleanDomain = domain.toLowerCase().trim();
     if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
       return res.status(400).json({ error: 'Invalid domain format' });
@@ -204,10 +223,15 @@ router.post('/subdomains', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 10000);
 
+    logToolActivity('Subdomain Enumeration', `Enumerating subdomains for ${cleanDomain}`, 'info');
+
     const result = await performSubdomainEnumeration(cleanDomain, safeTimeout);
+
+    logToolActivity('Subdomain Enumeration', `Found ${result.subdomains.length} subdomains for ${cleanDomain}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Subdomain Enumeration', `Enumeration failed: ${error.message}`, 'warning');
     console.error('Subdomain enumeration error:', error);
     res.status(500).json({
       error: 'Subdomain enumeration failed',
@@ -225,7 +249,6 @@ router.post('/dns-recon', async (req, res) => {
       return res.status(400).json({ error: 'Invalid domain parameter' });
     }
 
-    // Basic domain validation
     const cleanDomain = domain.toLowerCase().trim();
     if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
       return res.status(400).json({ error: 'Invalid domain format' });
@@ -233,10 +256,15 @@ router.post('/dns-recon', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
 
+    logToolActivity('DNS Recon', `Performing DNS reconnaissance on ${cleanDomain}`, 'info');
+
     const result = await performDNSRecon(cleanDomain, safeTimeout);
+
+    logToolActivity('DNS Recon', `Completed DNS recon for ${cleanDomain}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('DNS Recon', `Recon failed: ${error.message}`, 'warning');
     console.error('DNS recon error:', error);
     res.status(500).json({
       error: 'DNS reconnaissance failed',
@@ -254,7 +282,6 @@ router.post('/api-scanner', async (req, res) => {
       return res.status(400).json({ error: 'Invalid target parameter' });
     }
 
-    // Basic URL validation
     try {
       new URL(target);
     } catch {
@@ -263,10 +290,15 @@ router.post('/api-scanner', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 30000);
 
+    logToolActivity('API Scanner', `Scanning API endpoints at ${target}`, 'info');
+
     const result = await performAPIScan(target, apiKey, safeTimeout);
+
+    logToolActivity('API Scanner', `Found ${result.endpoints?.length || 0} endpoints at ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('API Scanner', `Scan failed: ${error.message}`, 'warning');
     console.error('API scan error:', error);
     res.status(500).json({
       error: 'API scan failed',
@@ -284,10 +316,15 @@ router.post('/breach-check', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email parameter' });
     }
 
+    logToolActivity('Breach Checker', `Checking breaches for ${email}`, 'info');
+
     const result = await performBreachCheck(email);
+
+    logToolActivity('Breach Checker', `Found ${result.breaches?.length || 0} breaches for ${email}`, result.breaches?.length ? 'warning' : 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Breach Checker', `Check failed: ${error.message}`, 'warning');
     console.error('Breach check error:', error);
     res.status(500).json({
       error: 'Breach check failed',
@@ -311,10 +348,15 @@ router.post('/hash-crack', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
 
+    logToolActivity('Hash Cracker', `Attempting to crack ${hashes.length} hashes`, 'info');
+
     const result = await performHashCracking(hashes, safeTimeout);
+
+    logToolActivity('Hash Cracker', `Cracked ${result.cracked?.length || 0} of ${hashes.length} hashes`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Hash Cracker', `Cracking failed: ${error.message}`, 'warning');
     console.error('Hash crack error:', error);
     res.status(500).json({
       error: 'Hash cracking failed',
@@ -334,10 +376,15 @@ router.post('/dir-fuzz', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
 
+    logToolActivity('Directory Fuzzer', `Fuzzing directories on ${target}`, 'info');
+
     const result = await performDirectoryFuzzing(target, safeTimeout);
+
+    logToolActivity('Directory Fuzzer', `Found ${result.found?.length || 0} directories on ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Directory Fuzzer', `Fuzzing failed: ${error.message}`, 'warning');
     console.error('Directory fuzzing error:', error);
     res.status(500).json({
       error: 'Directory fuzzing failed',
@@ -355,7 +402,6 @@ router.post('/auth-check', async (req, res) => {
       return res.status(400).json({ error: 'Invalid target parameter' });
     }
 
-    // Basic URL validation
     try {
       new URL(target);
     } catch {
@@ -364,10 +410,15 @@ router.post('/auth-check', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 30000);
 
+    logToolActivity('Auth Checker', `Checking authentication security for ${target}`, 'info');
+
     const result = await performAuthCheck(target, username, password, safeTimeout);
+
+    logToolActivity('Auth Checker', `Completed auth check for ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Auth Checker', `Check failed: ${error.message}`, 'warning');
     console.error('Auth check error:', error);
     res.status(500).json({
       error: 'Authentication check failed',
@@ -387,10 +438,15 @@ router.post('/container-scan', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
 
+    logToolActivity('Container Scanner', `Scanning container image: ${imageName}`, 'info');
+
     const result = await performContainerScan(imageName, safeTimeout);
+
+    logToolActivity('Container Scanner', `Scan completed for ${imageName}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Container Scanner', `Scan failed: ${error.message}`, 'warning');
     console.error('Container scan error:', error);
     res.status(500).json({
       error: 'Container scan failed',
@@ -408,10 +464,15 @@ router.post('/cipher-process', async (req, res) => {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
 
+    logToolActivity('Cipher Tool', `${operation}ing with ${cipherType}`, 'info');
+
     const result = await processCipher(cipherType, operation, input, key);
+
+    logToolActivity('Cipher Tool', `${operation}ion completed using ${cipherType}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Cipher Tool', `Operation failed: ${error.message}`, 'warning');
     console.error('Cipher process error:', error);
     res.status(500).json({
       error: 'Cipher processing failed',
@@ -429,10 +490,15 @@ router.post('/cipher-analyze', async (req, res) => {
       return res.status(400).json({ error: 'Missing input parameter' });
     }
 
+    logToolActivity('Cipher Analyzer', `Analyzing cipher text`, 'info');
+
     const result = await analyzeCipher(input);
+
+    logToolActivity('Cipher Analyzer', `Analysis completed - Detected ${result.likelyCipher}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Cipher Analyzer', `Analysis failed: ${error.message}`, 'warning');
     console.error('Cipher analyze error:', error);
     res.status(500).json({
       error: 'Cipher analysis failed',
@@ -452,10 +518,15 @@ router.post('/vuln-fuzz', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
 
+    logToolActivity('Vulnerability Fuzzer', `Fuzzing vulnerabilities on ${target}`, 'info');
+
     const result = await performVulnerabilityFuzzing(target, safeTimeout);
+
+    logToolActivity('Vulnerability Fuzzer', `Found ${result.vulnerabilities?.length || 0} potential vulnerabilities`, result.vulnerabilities?.length ? 'warning' : 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Vulnerability Fuzzer', `Fuzzing failed: ${error.message}`, 'warning');
     console.error('Vulnerability fuzzing error:', error);
     res.status(500).json({
       error: 'Vulnerability fuzzing failed',
@@ -475,10 +546,15 @@ router.post('/s3-finder', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
 
+    logToolActivity('S3 Bucket Finder', `Searching for S3 buckets with keyword: ${keyword}`, 'info');
+
     const result = await performS3BucketFinding(keyword, safeTimeout);
+
+    logToolActivity('S3 Bucket Finder', `Found ${result.buckets?.length || 0} S3 buckets`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('S3 Bucket Finder', `Search failed: ${error.message}`, 'warning');
     console.error('S3 bucket finding error:', error);
     res.status(500).json({
       error: 'S3 bucket finding failed',
@@ -498,10 +574,15 @@ router.post('/k8s-enum', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
 
+    logToolActivity('K8s Enumerator', `Enumerating Kubernetes cluster at ${apiEndpoint}`, 'info');
+
     const result = await performK8sEnumeration(apiEndpoint, token, safeTimeout);
+
+    logToolActivity('K8s Enumerator', `Enumeration completed for ${apiEndpoint}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('K8s Enumerator', `Enumeration failed: ${error.message}`, 'warning');
     console.error('K8s enumeration error:', error);
     res.status(500).json({
       error: 'K8s enumeration failed',
@@ -519,10 +600,15 @@ router.post('/jwt-decode', async (req, res) => {
       return res.status(400).json({ error: 'Invalid token parameter' });
     }
 
+    logToolActivity('JWT Decoder', `Decoding JWT token`, 'info');
+
     const result = await decodeJWT(token);
+
+    logToolActivity('JWT Decoder', `JWT decoded successfully`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('JWT Decoder', `Decoding failed: ${error.message}`, 'warning');
     console.error('JWT decode error:', error);
     res.status(500).json({
       error: 'JWT decoding failed',
@@ -538,10 +624,15 @@ router.post('/ip-geo', async (req, res) => {
 
     const targetIP = ip && ip !== 'auto' ? ip : 'auto';
 
+    logToolActivity('IP Geolocation', `Looking up geolocation for ${targetIP}`, 'info');
+
     const result = await performIPGeolocation(targetIP);
+
+    logToolActivity('IP Geolocation', `Located ${targetIP} in ${result.city}, ${result.country}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('IP Geolocation', `Lookup failed: ${error.message}`, 'warning');
     console.error('IP geolocation error:', error);
     res.status(500).json({
       error: 'IP geolocation lookup failed',
@@ -559,7 +650,6 @@ router.post('/reverse-ip', async (req, res) => {
       return res.status(400).json({ error: 'Invalid IP address parameter' });
     }
 
-    // Basic IP validation
     const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
     const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
     
@@ -569,10 +659,15 @@ router.post('/reverse-ip', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
 
+    logToolActivity('Reverse IP Lookup', `Performing reverse lookup for ${ip}`, 'info');
+
     const result = await performReverseIPLookup(ip, safeTimeout);
+
+    logToolActivity('Reverse IP Lookup', `Found ${result.domains?.length || 0} domains for ${ip}`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Reverse IP Lookup', `Lookup failed: ${error.message}`, 'warning');
     console.error('Reverse IP lookup error:', error);
     res.status(500).json({
       error: 'Reverse IP lookup failed',
@@ -584,9 +679,15 @@ router.post('/reverse-ip', async (req, res) => {
 // Crypto Process Route
 router.post('/crypto-process', async (req, res) => {
   try {
+    logToolActivity('RSA/AES Tool', `${req.body.operation}ing data`, 'info');
+
     const result = await processCrypto(req.body);
+
+    logToolActivity('RSA/AES Tool', `${req.body.operation}ion completed`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('RSA/AES Tool', `Operation failed: ${error.message}`, 'warning');
     console.error('Crypto process error:', error);
     res.status(500).json({
       error: 'Encryption/Decryption failed',
@@ -598,9 +699,15 @@ router.post('/crypto-process', async (req, res) => {
 // Crypto Generate Keys Route
 router.post('/crypto-generate-keys', async (req, res) => {
   try {
+    logToolActivity('RSA/AES Tool', `Generating ${req.body.algorithm} keys`, 'info');
+
     const result = await generateKeys(req.body);
+
+    logToolActivity('RSA/AES Tool', `Keys generated successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('RSA/AES Tool', `Key generation failed: ${error.message}`, 'warning');
     console.error('Key generation error:', error);
     res.status(500).json({
       error: 'Key generation failed',
@@ -616,10 +723,15 @@ router.post('/packet-analyze', async (req, res) => {
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
 
+    logToolActivity('Packet Analyzer', `Analyzing network packets`, 'info');
+
     const result = await analyzePackets(pcapData, safeTimeout);
+
+    logToolActivity('Packet Analyzer', `Analyzed ${result.totalPackets} packets`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Packet Analyzer', `Analysis failed: ${error.message}`, 'warning');
     console.error('Packet analysis error:', error);
     res.status(500).json({
       error: 'Packet analysis failed',
@@ -635,10 +747,15 @@ router.post('/image-metadata', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'No image file uploaded' });
     }
 
+    logToolActivity('Image Metadata', `Extracting metadata from ${req.file.originalname}`, 'info');
+
     const result = await extractImageMetadata(req.file.buffer, req.file.originalname);
+
+    logToolActivity('Image Metadata', `Metadata extracted from ${req.file.originalname}`, result.gps ? 'warning' : 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Image Metadata', `Extraction failed: ${error.message}`, 'warning');
     console.error('Image metadata extraction error:', error);
     res.status(500).json({
       error: 'Metadata extraction failed',
@@ -660,14 +777,19 @@ router.post('/stego-hide', upload.single('coverImage'), async (req, res) => {
       return res.status(400).json({ error: 'No secret message provided' });
     }
 
+    logToolActivity('Image Steganography', `Hiding message in image`, 'info');
+
     const result = await hideDataInImage(
       req.file.buffer,
       secretMessage,
       password
     );
 
+    logToolActivity('Image Steganography', `Message hidden successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Image Steganography', `Hide failed: ${error.message}`, 'warning');
     console.error('Steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
@@ -685,13 +807,18 @@ router.post('/stego-extract', upload.single('stegoImage'), async (req, res) => {
 
     const { password } = req.body;
 
+    logToolActivity('Image Steganography', `Extracting hidden message from image`, 'info');
+
     const result = await extractDataFromImage(
       req.file.buffer,
       password
     );
 
+    logToolActivity('Image Steganography', `Message extracted successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Image Steganography', `Extract failed: ${error.message}`, 'warning');
     console.error('Steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
@@ -713,14 +840,19 @@ router.post('/audio-stego-hide', upload.single('coverAudio'), async (req, res) =
       return res.status(400).json({ error: 'No secret message provided' });
     }
 
+    logToolActivity('Audio Steganography', `Hiding message in audio`, 'info');
+
     const result = await hideDataInAudio(
       req.file.buffer,
       secretMessage,
       password
     );
 
+    logToolActivity('Audio Steganography', `Message hidden successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Audio Steganography', `Hide failed: ${error.message}`, 'warning');
     console.error('Audio steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
@@ -738,13 +870,18 @@ router.post('/audio-stego-extract', upload.single('stegoAudio'), async (req, res
 
     const { password } = req.body;
 
+    logToolActivity('Audio Steganography', `Extracting hidden message from audio`, 'info');
+
     const result = await extractDataFromAudio(
       req.file.buffer,
       password
     );
 
+    logToolActivity('Audio Steganography', `Message extracted successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Audio Steganography', `Extract failed: ${error.message}`, 'warning');
     console.error('Audio steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
@@ -766,6 +903,8 @@ router.post('/doc-stego-hide', upload.single('coverDocument'), async (req, res) 
       return res.status(400).json({ error: 'No secret message provided' });
     }
 
+    logToolActivity('Document Steganography', `Hiding message in document`, 'info');
+
     const result = await hideDataInDocument(
       req.file.buffer,
       req.file.originalname,
@@ -773,8 +912,11 @@ router.post('/doc-stego-hide', upload.single('coverDocument'), async (req, res) 
       password
     );
 
+    logToolActivity('Document Steganography', `Message hidden successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Document Steganography', `Hide failed: ${error.message}`, 'warning');
     console.error('Document steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
@@ -792,13 +934,18 @@ router.post('/doc-stego-extract', upload.single('stegoDocument'), async (req, re
 
     const { password } = req.body;
 
+    logToolActivity('Document Steganography', `Extracting hidden message from document`, 'info');
+
     const result = await extractDataFromDocument(
       req.file.buffer,
       password
     );
 
+    logToolActivity('Document Steganography', `Message extracted successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Document Steganography', `Extract failed: ${error.message}`, 'warning');
     console.error('Document steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
@@ -820,6 +967,8 @@ router.post('/video-stego-hide', upload.single('coverVideo'), async (req, res) =
       return res.status(400).json({ error: 'No secret message provided' });
     }
 
+    logToolActivity('Video Steganography', `Hiding message in video`, 'info');
+
     const result = await hideDataInVideo(
       req.file.buffer,
       req.file.originalname,
@@ -827,8 +976,11 @@ router.post('/video-stego-hide', upload.single('coverVideo'), async (req, res) =
       password
     );
 
+    logToolActivity('Video Steganography', `Message hidden successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Video Steganography', `Hide failed: ${error.message}`, 'warning');
     console.error('Video steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
@@ -846,13 +998,18 @@ router.post('/video-stego-extract', upload.single('stegoVideo'), async (req, res
 
     const { password } = req.body;
 
+    logToolActivity('Video Steganography', `Extracting hidden message from video`, 'info');
+
     const result = await extractDataFromVideo(
       req.file.buffer,
       password
     );
 
+    logToolActivity('Video Steganography', `Message extracted successfully`, 'success');
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Video Steganography', `Extract failed: ${error.message}`, 'warning');
     console.error('Video steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
@@ -870,10 +1027,15 @@ router.post('/osint-search', async (req, res) => {
       return res.status(400).json({ error: 'Invalid search query' });
     }
 
+    logToolActivity('OSINT Search', `Searching: ${query.substring(0, 50)}...`, 'info');
+
     const result = await performOSINTSearch(query);
+
+    logToolActivity('OSINT Search', `Found ${result.totalResults} results`, 'success');
 
     res.json(result);
   } catch (error: any) {
+    logToolActivity('OSINT Search', `Search failed: ${error.message}`, 'warning');
     console.error('OSINT search error:', error);
     res.status(500).json({
       error: 'OSINT search failed',
@@ -905,9 +1067,13 @@ router.post('/start-capture', async (req, res) => {
       return res.status(400).json({ error: 'Interface name is required' });
     }
 
+    logToolActivity('Packet Capturer', `Started capture on ${interfaceName}`, 'info');
+
     const result = startPacketCapture(interfaceName, filter);
+
     res.json(result);
   } catch (error: any) {
+    logToolActivity('Packet Capturer', `Capture start failed: ${error.message}`, 'warning');
     console.error('Start capture error:', error);
     res.status(500).json({
       error: 'Failed to start capture',
@@ -920,6 +1086,9 @@ router.post('/start-capture', async (req, res) => {
 router.post('/stop-capture', async (req, res) => {
   try {
     const result = stopPacketCapture();
+
+    logToolActivity('Packet Capturer', `Stopped packet capture`, 'success');
+
     res.json(result);
   } catch (error: any) {
     console.error('Stop capture error:', error);
@@ -956,6 +1125,51 @@ router.get('/download-pcap', async (req, res) => {
     console.error('Download PCAP error:', error);
     res.status(500).json({
       error: 'Failed to download PCAP',
+      message: error.message,
+    });
+  }
+});
+
+// Get Recent Tool Activity
+router.get('/recent-tools', async (req, res) => {
+  try {
+    const tools = getRecentToolActivity(10);
+    res.json({ tools });
+  } catch (error: any) {
+    console.error('Recent tools error:', error);
+    res.status(500).json({
+      error: 'Failed to get recent tools',
+      message: error.message,
+    });
+  }
+});
+
+// Get System Resources
+router.get('/system-resources', async (req, res) => {
+  try {
+    const result = getSystemResources();
+    res.json(result);
+  } catch (error: any) {
+    console.error('System resources error:', error);
+    res.status(500).json({
+      error: 'Failed to get system resources',
+      message: error.message,
+    });
+  }
+});
+
+// Rate limiter: max 30 requests per minute
+const resourceLimiter = createRateLimiter(30, 60000);
+
+// Get System Resources (with rate limiting)
+router.get('/system-resources', resourceLimiter, async (req, res) => {
+  try {
+    const result = getSystemResources();
+    res.json(result);
+  } catch (error: any) {
+    console.error('System resources error:', error);
+    res.status(500).json({
+      error: 'Failed to get system resources',
       message: error.message,
     });
   }
