@@ -10,3 +10,5 @@ flask>=2.3.0
 flask-cors>=4.0.0
 paramiko>=3.3.0
 elasticsearch>=8.9.0
+tqdm
+rich
