@@ -31,8 +31,12 @@ const Dashboard = () => {
     network: 0,
     disk: 0,
   });
+  const [isActive, setIsActive] = useState(true);
 
   useEffect(() => {
+    // Set component as active when mounted
+    setIsActive(true);
+
     // Fetch initial data
     fetchRecentTools();
     fetchSystemResources();
@@ -45,22 +49,45 @@ const Dashboard = () => {
       }));
     }, 5000);
 
-    // Update recent tools every 5 seconds (increased from 3)
+    // Update recent tools every 5 seconds (only when active)
     const toolsInterval = setInterval(() => {
-      fetchRecentTools();
+      if (isActive) {
+        fetchRecentTools();
+      }
     }, 5000);
 
-    // Update system resources every 3 seconds (increased from 2)
+    // Update system resources every 5 seconds (only when active)
     const resourcesInterval = setInterval(() => {
-      fetchSystemResources();
-    }, 3000);
+      if (isActive) {
+        fetchSystemResources();
+      }
+    }, 5000);
 
+    // Handle visibility change (tab switching)
+    const handleVisibilityChange = () => {
+      setIsActive(!document.hidden);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cleanup
     return () => {
+      setIsActive(false);
       clearInterval(statsInterval);
       clearInterval(toolsInterval);
       clearInterval(resourcesInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  // Update isActive state when component unmounts or remounts
+  useEffect(() => {
+    if (!isActive) return;
+
+    // Fetch data when component becomes active again
+    fetchRecentTools();
+    fetchSystemResources();
+  }, [isActive]);
 
   const fetchRecentTools = async () => {
     try {
@@ -171,6 +198,9 @@ const Dashboard = () => {
               <HealthBar label="MEMORY" percentage={systemResources.memory} />
               <HealthBar label="NETWORK" percentage={systemResources.network} />
               <HealthBar label="DISK I/O" percentage={systemResources.disk} />
+            </div>
+            <div className="text-xs text-gray-500 mt-2 text-right">
+              Updates every 5 seconds
             </div>
           </div>
         </div>
