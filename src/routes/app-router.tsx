@@ -29,6 +29,8 @@ import PacketAnalyzer from "@/pages/tools/PacketAnalyzer";
 import ImageMetadataExtractor from "@/pages/tools/ImageMetaDataExtractor";
 import ImageSteganography from "@/pages/tools/ImageSteganography";
 import AudioSteganography from "@/pages/tools/AudioSteganography";
+import DocumentSteganography from "@/pages/tools/DocumentSteganography";
+import VideoSteganography from "@/pages/tools/VideoSteganography";
 
 const AppRouter = () => {
   return (
@@ -61,6 +63,8 @@ const AppRouter = () => {
         <Route path="/tools/image-exif" element={<ImageMetadataExtractor />} />
         <Route path="/tools/stego-image" element={<ImageSteganography />} />
         <Route path="/tools/stego-audio" element={<AudioSteganography />} />
+        <Route path="/tools/stego-doc" element={<DocumentSteganography />} />
+        <Route path="/tools/stego-video" element={<VideoSteganography />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

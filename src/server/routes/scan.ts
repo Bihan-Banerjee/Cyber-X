@@ -24,6 +24,9 @@ import multer from 'multer';
 import { extractImageMetadata } from '../scanners/imageMetaDataExtractor.js';
 import { hideDataInImage, extractDataFromImage } from '../scanners/imageSteganography.js';
 import { hideDataInAudio, extractDataFromAudio } from '../scanners/audioSteganography.js';
+import { hideDataInDocument, extractDataFromDocument } from '../scanners/documentSteganography.js';
+import { hideDataInVideo, extractDataFromVideo } from '../scanners/videoSteganography.js';
+
 
 const router = express.Router();
 
@@ -741,5 +744,112 @@ router.post('/audio-stego-extract', upload.single('stegoAudio'), async (req, res
   }
 });
 
+// Document Steganography Hide Route
+router.post('/doc-stego-hide', upload.single('coverDocument'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No cover document uploaded' });
+    }
+
+    const { secretMessage, password } = req.body;
+
+    if (!secretMessage) {
+      return res.status(400).json({ error: 'No secret message provided' });
+    }
+
+    const result = await hideDataInDocument(
+      req.file.buffer,
+      req.file.originalname,
+      secretMessage,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Document steganography hide error:', error);
+    res.status(500).json({
+      error: 'Failed to hide data',
+      message: error.message,
+    });
+  }
+});
+
+// Document Steganography Extract Route
+router.post('/doc-stego-extract', upload.single('stegoDocument'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No stego document uploaded' });
+    }
+
+    const { password } = req.body;
+
+    const result = await extractDataFromDocument(
+      req.file.buffer,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Document steganography extract error:', error);
+    res.status(500).json({
+      error: 'Failed to extract data',
+      message: error.message,
+    });
+  }
+});
+
+// Video Steganography Hide Route
+router.post('/video-stego-hide', upload.single('coverVideo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No cover video uploaded' });
+    }
+
+    const { secretMessage, password } = req.body;
+
+    if (!secretMessage) {
+      return res.status(400).json({ error: 'No secret message provided' });
+    }
+
+    const result = await hideDataInVideo(
+      req.file.buffer,
+      req.file.originalname,
+      secretMessage,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Video steganography hide error:', error);
+    res.status(500).json({
+      error: 'Failed to hide data',
+      message: error.message,
+    });
+  }
+});
+
+// Video Steganography Extract Route
+router.post('/video-stego-extract', upload.single('stegoVideo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No stego video uploaded' });
+    }
+
+    const { password } = req.body;
+
+    const result = await extractDataFromVideo(
+      req.file.buffer,
+      password
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Video steganography extract error:', error);
+    res.status(500).json({
+      error: 'Failed to extract data',
+      message: error.message,
+    });
+  }
+});
 
 export default router;

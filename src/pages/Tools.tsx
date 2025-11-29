@@ -198,7 +198,7 @@ const Tools = () => {
     {
       icon: FileSearch,
       name: "Document Steganography",
-      description: "Extract hidden data from document files",
+      description: "Extract hidden data from document files (Work in Progress)",
       path: "/tools/stego-doc",
       category: "Forensics",
     },
