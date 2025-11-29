@@ -31,7 +31,7 @@ import ImageSteganography from "@/pages/tools/ImageSteganography";
 import AudioSteganography from "@/pages/tools/AudioSteganography";
 import DocumentSteganography from "@/pages/tools/DocumentSteganography";
 import VideoSteganography from "@/pages/tools/VideoSteganography";
-
+import GoogleDorkGenerator from "@/pages/tools/GoogleDorkGenerator";
 const AppRouter = () => {
   return (
     <Layout>
@@ -65,6 +65,7 @@ const AppRouter = () => {
         <Route path="/tools/stego-audio" element={<AudioSteganography />} />
         <Route path="/tools/stego-doc" element={<DocumentSteganography />} />
         <Route path="/tools/stego-video" element={<VideoSteganography />} />
+        <Route path="/tools/google-dorks" element={<GoogleDorkGenerator />} />
         <Route path="/honeypots" element={<Honeypots />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

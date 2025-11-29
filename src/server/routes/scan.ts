@@ -26,7 +26,7 @@ import { hideDataInImage, extractDataFromImage } from '../scanners/imageSteganog
 import { hideDataInAudio, extractDataFromAudio } from '../scanners/audioSteganography.js';
 import { hideDataInDocument, extractDataFromDocument } from '../scanners/documentSteganography.js';
 import { hideDataInVideo, extractDataFromVideo } from '../scanners/videoSteganography.js';
-
+import { performOSINTSearch } from '../scanners/osintSearch.js';
 
 const router = express.Router();
 
@@ -847,6 +847,27 @@ router.post('/video-stego-extract', upload.single('stegoVideo'), async (req, res
     console.error('Video steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
+      message: error.message,
+    });
+  }
+});
+
+// OSINT Search Route
+router.post('/osint-search', async (req, res) => {
+  try {
+    const { query } = req.body;
+
+    if (!query || typeof query !== 'string') {
+      return res.status(400).json({ error: 'Invalid search query' });
+    }
+
+    const result = await performOSINTSearch(query);
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('OSINT search error:', error);
+    res.status(500).json({
+      error: 'OSINT search failed',
       message: error.message,
     });
   }
