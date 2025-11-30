@@ -1,0 +1,27 @@
+{
+  "model_paths": {
+    "attacker_best": "./models/production/attacker_iter_24.zip",
+    "defender_best": "./models/production/defender_iter_24.zip",
+    "attacker_pretrained": "./models/pretrained/attacker_pretrained.zip",
+    "production_dir": "./models/production",
+    "pretrained_dir": "./models/pretrained"
+  },
+  "training": {
+    "default_iterations": 10,
+    "default_timesteps": 50000,
+    "eval_episodes": 20,
+    "checkpoint_frequency": 2
+  },
+  "llm": {
+    "enabled": true,
+    "provider": "ollama",
+    "model": "llama3.2:3b",
+    "api_base": "http://localhost:11434",
+    "consult_probability": 0.2,
+    "temperature": 0.7
+  },
+  "logging": {
+    "tensorboard_dir": "./logs",
+    "save_replays": true
+  }
+}

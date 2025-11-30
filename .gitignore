@@ -1,20 +1,214 @@
-logs
+# ============================================================
+# CyberX Project .gitignore
+# ============================================================
+
+# ===== Logs =====
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-node_modules
-dist
-dist-ssr
+
+# ===== Node.js =====
+node_modules/
+dist/
+dist-ssr/
 *.local
+
+# ===== IDEs & Editors =====
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*.bak
+*.tmp
+
+# ===== Python Virtual Environment =====
+src/server/rl/venv/
+src/server/rl/.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===== RL Training Artifacts =====
+# Models (large files - should NOT be in git)
+src/server/rl/models/
+*.zip
+*.pkl
+*.h5
+*.pth
+*.pt
+
+# Training logs & data
+src/server/rl/logs/
+src/server/rl/datasets/
+src/server/rl/training_history.json
+src/server/rl/training_progress.png
+
+# TensorBoard
+src/server/rl/runs/
+
+# ===== Docker Volumes & Data =====
+# Honeypot logs
+docker/cowrie/var/
+docker/dionaea/log/
+docker/dionaea/bistreams/
+docker/zeek/logs/
+docker/logstash/
+
+# Elasticsearch data
+docker/elastic_data/
+
+# Ollama models (very large!)
+docker/ollama_data/
+
+# ===== Environment Variables =====
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ===== OS Files =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===== Certificates & Keys (IMPORTANT!) =====
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ssh/
+id_rsa
+id_rsa.pub
+.ssh/
+
+# ===== Database Files =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== Backup Files =====
+*.backup
+*.bak
+*.old
+*~
+
+# ===== Temporary Files =====
+tmp/
+temp/
+*.tmp
+*.temp
+
+# ===== Coverage Reports =====
+coverage/
+.nyc_output/
+*.coverage
+htmlcov/
+.pytest_cache/
+
+# ===== Build Artifacts =====
+*.o
+*.a
+*.lib
+*.dll
+*.exe
+*.out
+*.app
+
+# ===== Jupyter Notebook =====
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== macOS =====
+.AppleDouble
+.LSOverride
+
+# ===== Windows =====
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# ===== Linux =====
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ===== AI/ML Specific =====
+wandb/
+mlruns/
+.neptune/
+lightning_logs/
+
+# ===== Docker =====
+docker-compose.override.yml
+.dockerignore
+
+# ===== Large Media Files =====
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+
+# ===== Sensitive Config Files =====
+config.local.json
+secrets.json
+credentials.json
+
+# ===== Testing =====
+.pytest_cache/
+.coverage
+htmlcov/
+test-results/
+junit.xml
+
+# ===== Keep These =====
+# Force include important files even if they match patterns above
+!.vscode/extensions.json
+!.gitkeep
+!README.md

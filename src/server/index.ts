@@ -3,9 +3,11 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import scanRoutes from './routes/scan';
 import honeypotRoutes from './routes/honeypot.js';
+import axios from 'axios';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const RL_API_URL = 'http://localhost:5000';
 
 app.use(cors());
 app.use(express.json());
@@ -29,3 +31,20 @@ app.listen(PORT, () => {
 });
 
 app.use('/api/honeypot', honeypotRoutes);
+
+// Proxy all /api/rl/* requests to Python Flask server
+app.use('/api/rl', async (req, res) => {
+  try {
+    const response = await axios({
+      method: req.method,
+      url: `${RL_API_URL}${req.url}`,
+      data: req.body,
+      headers: req.headers,
+    });
+    res.status(response.status).json(response.data);
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({
+      error: error.message
+    });
+  }
+});

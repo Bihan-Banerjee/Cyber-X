@@ -1,5 +1,6 @@
 version: '3.8'
 
+
 services:
   # Cowrie SSH/Telnet Honeypot
   cowrie:
@@ -22,6 +23,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
+
   # Dionaea Multi-Protocol Honeypot
   dionaea:
     image: dinotools/dionaea:latest
@@ -41,6 +43,7 @@ services:
       - honeypot_net
     restart: unless-stopped
 
+
   # Zeek Network Monitor
   zeek:
     image: zeek/zeek:latest
@@ -52,6 +55,7 @@ services:
       - honeypot_net
     command: zeekctl deploy
     restart: unless-stopped
+
 
   # Elasticsearch for Log Storage
   elasticsearch:
@@ -69,6 +73,7 @@ services:
       - honeypot_net
     restart: unless-stopped
 
+
   # Kibana for Visualization
   kibana:
     image: docker.elastic.co/kibana/kibana:8.11.0
@@ -82,6 +87,7 @@ services:
     networks:
       - honeypot_net
     restart: unless-stopped
+
 
   # Logstash for Log Processing
   logstash:
@@ -104,6 +110,34 @@ services:
       - honeypot_net
     restart: unless-stopped
 
+
+  # Ollama LLM Service for RL Agent Assistance
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cyberx-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - honeypot_net
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
 networks:
   honeypot_net:
     driver: bridge
@@ -111,6 +145,9 @@ networks:
       config:
         - subnet: 172.20.0.0/16
 
+
 volumes:
   elastic_data:
+    driver: local
+  ollama_data:
     driver: local

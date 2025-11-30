@@ -3,17 +3,18 @@ import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 import gymnasium as gym
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 import os
+import requests
+import re
+import random
+
+from config_loader import config
 
 class AttackerFeatureExtractor(BaseFeaturesExtractor):
-    """
-    Custom feature extractor for attacker observations
-    Processes state and learns useful representations
-    """
+    """Custom feature extractor for attacker observations"""
     
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 128):
         super().__init__(observation_space, features_dim)
@@ -35,11 +36,131 @@ class AttackerFeatureExtractor(BaseFeaturesExtractor):
         return self.network(observations)
 
 
+class LLMAssistant:
+    """LLM-based tactic advisor for attacker"""
+    
+    def __init__(self):
+        self.llm_config = config.get_llm_config()
+        self.enabled = self.llm_config.get('enabled', False)
+        self.provider = self.llm_config.get('provider', 'ollama')
+        self.model = self.llm_config.get('model', 'llama3.2:3b')
+        self.api_base = self.llm_config.get('api_base', 'http://localhost:11434')
+        self.consult_prob = self.llm_config.get('consult_probability', 0.2)
+        self.temperature = self.llm_config.get('temperature', 0.7)
+        
+        if self.enabled:
+            self._test_connection()
+    
+    def _test_connection(self):
+        """Test if Ollama is running"""
+        try:
+            response = requests.get(f"{self.api_base}/api/tags", timeout=2)
+            if response.status_code == 200:
+                print(f"✅ LLM Assistant connected: {self.provider} ({self.model})")
+            else:
+                print(f"⚠️  LLM service responded but with error")
+                self.enabled = False
+        except Exception as e:
+            print(f"⚠️  LLM service not available: {e}")
+            print("   Continuing without LLM assistance")
+            self.enabled = False
+    
+    def get_suggestion(self, observation: np.ndarray) -> Optional[int]:
+        """Get action suggestion from LLM"""
+        if not self.enabled:
+            return None
+        
+        # Only consult LLM sometimes
+        if random.random() > self.consult_prob:
+            return None
+        
+        try:
+            prompt = self._build_prompt(observation)
+            
+            if self.provider == 'ollama':
+                return self._query_ollama(prompt)
+            else:
+                return None
+        
+        except Exception as e:
+            print(f"LLM query error: {e}")
+            return None
+    
+    def _build_prompt(self, obs: np.ndarray) -> str:
+        """Build prompt from observation"""
+        connection_active = obs[0] > 0.5
+        commands_executed = int(obs[1])
+        files_accessed = int(obs[2])
+        privilege_level = obs[3]
+        detection_score = obs[4]
+        
+        priv_str = "none"
+        if privilege_level > 0.9:
+            priv_str = "root"
+        elif privilege_level > 0.4:
+            priv_str = "user"
+        
+        prompt = f"""You are a red team penetration tester. Current honeypot state:
+- Connection: {'ACTIVE' if connection_active else 'NOT CONNECTED'}
+- Privilege: {priv_str} ({privilege_level:.2f})
+- Commands run: {commands_executed}
+- Files accessed: {files_accessed}
+- Detection risk: {detection_score:.2f} (0=safe, 1=detected)
+
+Available actions:
+0: Brute force SSH login
+1: Enumerate users/services
+2: Run reconnaissance commands
+3: Download malware/tools
+4: Attempt privilege escalation
+5: Create backdoor user
+6: Modify system files
+7: Exfiltrate sensitive data
+8: Port scan internal network
+9: Wait/observe passively
+
+Pick ONE action number (0-9) that maximizes attack success while minimizing detection. Reply with ONLY the number."""
+
+        return prompt
+    
+    def _query_ollama(self, prompt: str) -> Optional[int]:
+        """Query local Ollama instance"""
+        try:
+            response = requests.post(
+                f"{self.api_base}/api/generate",
+                json={
+                    'model': self.model,
+                    'prompt': prompt,
+                    'stream': False,
+                    'options': {
+                        'temperature': self.temperature,
+                        'num_predict': 20,
+                        'stop': ['\n', '.']
+                    }
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                text = response.json()['response']
+                
+                # Extract action number (first digit found)
+                match = re.search(r'\b([0-9])\b', text)
+                if match:
+                    action = int(match.group(1))
+                    if 0 <= action <= 9:
+                        print(f"🤖 LLM suggests: action {action}")
+                        return action
+            
+            return None
+        
+        except Exception as e:
+            print(f"Ollama query failed: {e}")
+            return None
+
+
 class AttackerAgent:
-    """
-    RL Agent that learns to attack honeypot systems
-    Uses PPO (Proximal Policy Optimization) algorithm
-    """
+    """RL Agent that learns to attack honeypot systems with optional LLM guidance"""
     
     def __init__(
         self,
@@ -55,15 +176,20 @@ class AttackerAgent:
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
         tensorboard_log: str = "./logs/attacker/",
-        device: str = "auto"
+        device: str = "auto",
+        use_llm: bool = True
     ):
         self.env = env
+        self.use_llm = use_llm and config.get_llm_config().get('enabled', False)
+        
+        # Initialize LLM assistant
+        self.llm_assistant = LLMAssistant() if self.use_llm else None
         
         # Custom policy with feature extractor
         policy_kwargs = dict(
             features_extractor_class=AttackerFeatureExtractor,
             features_extractor_kwargs=dict(features_dim=128),
-            net_arch=[dict(pi=[256, 128], vf=[256, 128])]
+            net_arch=dict(pi=[256, 128], vf=[256, 128])
         )
         
         # Initialize PPO agent
@@ -90,6 +216,8 @@ class AttackerAgent:
         self.total_steps = 0
         self.attack_success_rate = []
         self.detection_rate = []
+        self.llm_suggestions_used = 0
+        self.llm_suggestions_total = 0
     
     def train(
         self,
@@ -99,6 +227,8 @@ class AttackerAgent:
     ):
         """Train the attacker agent"""
         print(f"🔴 Training Attacker Agent for {total_timesteps} timesteps...")
+        if self.llm_assistant and self.llm_assistant.enabled:
+            print(f"   🤖 LLM assistance: ENABLED ({self.llm_assistant.consult_prob*100:.0f}% consult rate)")
         
         self.model.learn(
             total_timesteps=total_timesteps,
@@ -111,7 +241,18 @@ class AttackerAgent:
         return self
     
     def predict(self, observation, deterministic: bool = False):
-        """Get action from trained policy"""
+        """Get action from trained policy, optionally consulting LLM"""
+        
+        # Try LLM suggestion first
+        if self.llm_assistant and self.llm_assistant.enabled and not deterministic:
+            self.llm_suggestions_total += 1
+            llm_action = self.llm_assistant.get_suggestion(observation)
+            
+            if llm_action is not None:
+                self.llm_suggestions_used += 1
+                return llm_action
+        
+        # Fall back to RL policy
         action, _states = self.model.predict(observation, deterministic=deterministic)
         return action
     
@@ -137,11 +278,14 @@ class AttackerAgent:
                 episode_reward += reward
                 episode_length += 1
                 
-                # Track success metrics
-                if info.get('successful_exploits', 0) > 0:
+                # Track success metrics (relaxed criteria)
+                if episode_reward > 300:  # Threshold for "successful" attack
                     success_count += 1
+                    break  # Count once per episode
+                
                 if info.get('detected', False):
                     detection_count += 1
+                    break
             
             episode_rewards.append(episode_reward)
             episode_lengths.append(episode_length)
@@ -162,26 +306,32 @@ class AttackerAgent:
         print(f"  Success Rate: {results['success_rate']:.2%}")
         print(f"  Detection Rate: {results['detection_rate']:.2%}")
         
+        if self.llm_suggestions_total > 0:
+            llm_usage = self.llm_suggestions_used / self.llm_suggestions_total
+            print(f"  LLM Usage: {llm_usage:.1%} ({self.llm_suggestions_used}/{self.llm_suggestions_total})")
+        
         return results
     
     def save(self, path: str):
         """Save trained model"""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else '.', exist_ok=True)
         self.model.save(path)
         print(f"💾 Attacker model saved to {path}")
     
     def load(self, path: str):
         """Load trained model"""
+        if not os.path.exists(path):
+            print(f"❌ Model file not found: {path}")
+            return self
+        
         self.model = PPO.load(path, env=self.env)
         print(f"📂 Attacker model loaded from {path}")
         return self
     
-    def get_action_distribution(self, observation):
-        """Get probability distribution over actions"""
-        obs_tensor = torch.as_tensor(observation).float().unsqueeze(0)
-        with torch.no_grad():
-            actions, values, log_probs = self.model.policy.forward(obs_tensor)
-        return actions, values, log_probs
+    def load_best(self):
+        """Load the best/default model from config"""
+        best_path = config.get_best_attacker_path()
+        return self.load(best_path)
 
 
 class AttackerCallback(BaseCallback):

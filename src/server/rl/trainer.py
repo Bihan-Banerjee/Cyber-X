@@ -5,7 +5,7 @@ import time
 import json
 import os
 from datetime import datetime
-
+from config_loader import config
 from honeypot_env import HoneypotEnv
 from honeypot_env_sim import HoneypotEnvSimulated
 from attacker_agent import AttackerAgent, AttackerCallback
@@ -24,7 +24,8 @@ class SelfPlayTrainer:
         honeypot_host: str = 'localhost',
         honeypot_port: int = 2222,
         max_steps: int = 100,
-        save_dir: str = './models'
+        save_dir: str = './models',
+        load_pretrained: bool = False
     ):
         # Create environments
 #        self.attacker_env = HoneypotEnv(
@@ -47,8 +48,18 @@ class SelfPlayTrainer:
         self.defender_env = HoneypotEnvSimulated(mode='defender', max_steps=max_steps)
         
         # Create agents
-        self.attacker = AttackerAgent(self.attacker_env)
+        self.attacker = AttackerAgent(self.attacker_env, use_llm=True)
         self.defender = DefenderAgent(self.defender_env)
+
+        # Load pre-trained or best models if requested
+        if load_pretrained:
+            pretrained_path = 'models/pretrained/attacker_pretrained.zip'
+            if os.path.exists(pretrained_path):
+                print(f"📂 Loading pre-trained attacker from {pretrained_path}")
+                self.attacker.load(pretrained_path)
+            else:
+                print(f"⚠️  Pre-trained model not found, starting from scratch")
+
         
         self.save_dir = save_dir
         os.makedirs(save_dir, exist_ok=True)
