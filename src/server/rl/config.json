@@ -1,7 +1,7 @@
 {
   "model_paths": {
-    "attacker_best": "./models/production/attacker_iter_24.zip",
-    "defender_best": "./models/production/defender_iter_24.zip",
+    "attacker_best": "./models/production/attacker_iter_20.zip",
+    "defender_best": "./models/production/defender_iter_20.zip",
     "attacker_pretrained": "./models/pretrained/attacker_pretrained.zip",
     "production_dir": "./models/production",
     "pretrained_dir": "./models/pretrained"
