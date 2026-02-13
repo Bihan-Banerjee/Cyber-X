@@ -141,29 +141,6 @@
   }
 }
 
-html, body, #root {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;      
-  background: #000;       
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-@media (max-width: 600px) {
-  .layer-controls {
-    top: 10px;
-    right: 10px;
-  }
-  
-  .legend {
-    bottom: auto;
-    top: 10px;
-    left: 10px;
-    margin-top: 120px;  
-  }
-}
 
 .globe-wrapper {
   position: absolute;

@@ -80,7 +80,7 @@
   }
 
   body {
-    @apply bg-black text-foreground overflow-x-hidden;
+    @apply bg-black text-foreground overflow-x-hidden overflow-y-auto;
   }
 
   /* Scanline effect */
