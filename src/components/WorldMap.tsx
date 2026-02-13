@@ -1,193 +1,222 @@
-import { useState, useRef, useEffect } from 'react';
-import Globe from 'react-globe.gl';
-import {
-  signalStrengthData,
-  downtimeData,
-  fiveGData,
-  attackOrigins,
-} from '../data/mapLayers';
-import './WorldMap.css';
+import { useState, useRef, useEffect, useMemo } from "react";
+import Globe from "react-globe.gl";
+import countriesGeoJson from "../data/countries.geo.json";
+import broadbandData from "../data/broadband_processed.json";
+import fiveGData from "../data/fiveg_coverage.json";
+import { attackOrigins } from "../data/mapLayers";
 
-const WorldMap = () => {
+import isoCountries from "i18n-iso-countries";
+import enLocale from "i18n-iso-countries/langs/en.json";
+import "./WorldMap.css";
+
+isoCountries.registerLocale(enLocale);
+
+type Layer = "signal" | "5g" | "attacks";
+
+export default function WorldMap() {
+
   const globeEl = useRef<any>();
 
-  // Layer toggles
-  const [showSignal, setShowSignal] = useState(true);
-  const [showDowntime, setShowDowntime] = useState(false);
-  const [show5G, setShow5G] = useState(false);
-  const [showAttacks, setShowAttacks] = useState(false);
+  const [activeLayer, setActiveLayer] = useState<Layer>("signal");
 
-  // Auto-rotate
-  useEffect(() => {
-    if (globeEl.current) {
-      globeEl.current.controls().autoRotate = true;
-      globeEl.current.controls().autoRotateSpeed = 0.5;
-      globeEl.current.controls().enablePan = false;
-
-    }
-  }, []);
+  /* -------------------- INIT -------------------- */
 
   useEffect(() => {
-    window.addEventListener('resize', () => globeEl.current?.refresh());
-    return () => window.removeEventListener('resize', () => {});
+    if (!globeEl.current) return;
+
+    const controls = globeEl.current.controls();
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.4;
+    controls.enablePan = false;
   }, []);
+
+  /* -------------------- BUILD LOOKUP MAPS -------------------- */
+
+  const signalMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    broadbandData.forEach((c: any) => {
+      if (c.iso) {
+        map[c.iso.toUpperCase()] = Number(c.download);
+      }
+    });
+    return map;
+  }, []);
+
+
+  const fiveGMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    fiveGData.forEach((c: any) => {
+      const iso2 = isoCountries.getAlpha2Code(c.country, "en");
+      if (iso2) map[iso2] = Number(c.coverage);
+    });
+    return map;
+  }, []);
+
+  /* -------------------- COLOR HELPERS -------------------- */
+
+  const speedColor = (v?: number) => {
+    if (!v) return "rgba(70,70,70,0.15)";
+    if (v > 200) return "rgba(0,255,140,0.7)";
+    if (v > 120) return "rgba(0,200,255,0.7)";
+    if (v > 60) return "rgba(255,200,0,0.65)";
+    return "rgba(255,70,70,0.6)";
+  };
+
+  const coverageColor = (v?: number) => {
+    if (!v) return "rgba(70,70,70,0.15)";
+    if (v > 0.8) return "rgba(0,200,255,0.7)";
+    if (v > 0.6) return "rgba(0,140,255,0.65)";
+    if (v > 0.4) return "rgba(0,90,200,0.6)";
+    return "rgba(0,60,140,0.55)";
+  };
+
+  
+  const [pulse, setPulse] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPulse(p => (p + 0.03) % 1);
+    }, 40);
+    return () => clearInterval(interval);
+  }, []);
+
+/* -------------------- UI -------------------- */
+
 
   return (
     <div className="world-map-container">
-      {/* Layer Controls */}
+
+      {/* -------- LAYER PANEL -------- */}
       <div className="layer-controls">
-        <h3>Map Layers</h3>
+        <h3>MAP LAYERS</h3>
+
         <button
-          className={showSignal ? 'active' : ''}
-          onClick={() => setShowSignal(!showSignal)}
+          className={activeLayer === "signal" ? "active" : ""}
+          onClick={() => setActiveLayer("signal")}
         >
           📶 Signal Strength
         </button>
+
         <button
-          className={showDowntime ? 'active' : ''}
-          onClick={() => setShowDowntime(!showDowntime)}
-        >
-          ⚠️ Downtime
-        </button>
-        <button
-          className={show5G ? 'active' : ''}
-          onClick={() => setShow5G(!show5G)}
+          className={activeLayer === "5g" ? "active" : ""}
+          onClick={() => setActiveLayer("5g")}
         >
           📡 5G Coverage
         </button>
+
         <button
-          className={showAttacks ? 'active' : ''}
-          onClick={() => setShowAttacks(!showAttacks)}
+          className={activeLayer === "attacks" ? "active" : ""}
+          onClick={() => setActiveLayer("attacks")}
         >
           🎯 Attack Origins
         </button>
       </div>
-      
+
+      {/* -------- GLOBE -------- */}
       <div className="globe-wrapper">
-        {/* Globe */}
+
         <Globe
           ref={globeEl}
+
           globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
           bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
           backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
 
-          // Signal Strength Layer (green pulses)
-          pointsData={showSignal ? signalStrengthData : []}
-          pointAltitude={0.01}
-          pointRadius={(d: any) => d.strength * 0.5}
-          pointColor={(d: any) => {
-            const strength = d.strength;
-            if (strength > 0.8) return '#ff9f43';
-            if (strength > 0.6) return '#ff6b6b';
-            return '#ff3b3b';
-          }}
-          pointLabel={(d: any) => `
-            <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; border: 1px solid #00ff88;">
-              <strong>${d.city}</strong><br/>
-              Signal: ${(d.strength * 100).toFixed(0)}%
-            </div>
-          `}
-          
-          // Downtime Layer (red polygons)
+          width={window.innerWidth}
+          height={window.innerHeight}
+
+          /* ---------- COUNTRY POLYGONS ---------- */
+
           polygonsData={
-          showDowntime
-            ? downtimeData.filter(
-                d =>
-                  d &&
-                  d.geometry &&
-                  d.geometry.type &&
-                  Array.isArray(d.geometry.coordinates)
-              )
-            : []
-        }
+            activeLayer === "signal" || activeLayer === "5g"
+              ? countriesGeoJson.features
+              : []
+          }
 
-        /* ---- VISUAL TUNING (Option C) ---- */
-
-        polygonAltitude={0.006}
-
-        polygonCapColor={(d: any) => {
-          const severity = d.properties?.severity ?? 0.5;
-          const alpha = Math.min(severity * 0.22, 0.22); // HARD CLAMP
-          return `rgba(0,0,0,${alpha})`;
-        }}
-
-        polygonSideColor={(d: any) => {
-          const severity = d.properties?.severity ?? 0.5;
-          return `rgba(255, 40, 40, ${severity * 0.35})`;
-        }}
-
-        polygonStrokeColor={() => '#ff4b4b'}
-
-        polygonsTransitionDuration={300}
-
-
-
-          // 5G Coverage Layer (blue hexagons)
-          hexBinPointsData={show5G ? fiveGData : []}
-          hexBinPointLat="lat"
-          hexBinPointLng="lng"
-          hexBinPointWeight="coverage"
-          hexAltitude={(d: any) => d.sumWeight * 0.05}
-          hexTopColor={() => 'rgba(75, 125, 255, 0.8)'}
-          hexSideColor={() => 'rgba(50, 90, 200, 0.5)'}
-          hexBinResolution={4}
-          hexLabel={(d: any) => `
-            <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; border: 1px solid #0096ff;">
-              <strong>📡 5G Zone</strong><br/>
-              Points: ${d.points.length}
-            </div>
-          `}
-          
-          // Attack Origins Layer (red arcs)
-          arcsData={showAttacks ? attackOrigins.map(d => ({
-            startLat: d.lat,
-            startLng: d.lng,
-            endLat: 13.0827,  
-            endLng: 80.2707,
-            attacks: d.attacks,
-            country: d.country,
-          })) : []}
-          arcColor={(d: any) => {
-            const intensity = d.attacks / 150;
-            return [`rgba(255, 0, 0, ${intensity})`, 'rgba(255, 100, 0, 0.3)'];
+          polygonAltitude={(d: any) => {
+            if (activeLayer !== "signal") return 0.01;
+            const iso2 = isoCountries.alpha3ToAlpha2(d.id);
+            const speed = signalMap[iso2];
+            return speed ? Math.min(speed / 800, 0.08) : 0.005;
           }}
+
+
+          polygonCapColor={(d: any) => {
+            const iso2 = isoCountries.alpha3ToAlpha2(d.id);
+                    
+            if (activeLayer === "signal") {
+              const v = signalMap[iso2];
+              if (!v) return "rgba(70,70,70,0.12)";
+            
+              const intensity = (Math.sin(pulse * Math.PI * 2) + 1) / 2;
+            
+              if (v > 200)
+                return `rgba(0,255,140,${0.5 + intensity * 0.4})`;
+            
+              if (v > 120)
+                return `rgba(0,200,255,${0.5 + intensity * 0.4})`;
+            
+              if (v > 60)
+                return `rgba(255,200,0,${0.45 + intensity * 0.3})`;
+            
+              return `rgba(255,70,70,${0.4 + intensity * 0.3})`;
+            }
+          
+            if (activeLayer === "5g") {
+              const v = fiveGMap[iso2];
+              return coverageColor(v);
+            }
+          
+            return "rgba(0,0,0,0)";
+          }}
+          
+
+          polygonSideColor={() => "rgba(255,255,255,0.08)"}
+          polygonStrokeColor={() => "#111"}
+
+          polygonLabel={(d: any) => {
+            const iso2 = isoCountries.alpha3ToAlpha2(d.id);
+
+            if (activeLayer === "signal") {
+              const v = signalMap[iso2];
+              return `<b>${d.properties.name}</b><br/>Speed: ${v ?? "N/A"} Mbps`;
+            }
+
+            if (activeLayer === "5g") {
+              const v = fiveGMap[iso2];
+              return `<b>${d.properties.name}</b><br/>5G Index: ${v ?? "N/A"}`;
+            }
+
+            return d.properties.name;
+          }}
+
+          /* ---------- ATTACK ARCS ---------- */
+
+          arcsData={
+            activeLayer === "attacks"
+              ? attackOrigins.map(a => ({
+                  startLat: a.lat,
+                  startLng: a.lng,
+                  endLat: 13.0827,
+                  endLng: 80.2707,
+                  attacks: a.attacks,
+                  country: a.country
+                }))
+              : []
+          }
+
+          arcColor={(d: any) => [
+            `rgba(255,0,0,${d.attacks / 120})`,
+            "rgba(255,150,0,0.4)"
+          ]}
+
           arcDashLength={0.4}
           arcDashGap={0.2}
-          arcDashAnimateTime={2000}
-          arcStroke={0.5}
-          arcLabel={(d: any) => `
-            <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; border: 1px solid #ff0000;">
-              <strong>🎯 ${d.country}</strong><br/>
-              Attacks: ${d.attacks}
-            </div>
-          `}
-          
-          // Appearance
-          atmosphereColor="#ff3333"
-          atmosphereAltitude={0.18}
-          width={undefined}
-          height={undefined}
-
+          arcDashAnimateTime={2500}
+          arcStroke={0.6}
         />
       </div>
-      {/* Legend */}
-      <div className="legend">
-        <h4>CyberX Global Threat Map</h4>
-        <div className="legend-item">
-          <span className="dot green"></span> Strong Signal
-        </div>
-        <div className="legend-item">
-          <span className="dot red"></span> Downtime Zone
-        </div>
-        <div className="legend-item">
-          <span className="dot blue"></span> 5G Coverage
-        </div>
-        <div className="legend-item">
-          <span className="arc"></span> Attack Vector
-        </div>
-      </div>
+
     </div>
   );
-};
-
-export default WorldMap;
+}

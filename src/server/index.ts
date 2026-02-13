@@ -4,9 +4,11 @@ import rateLimit from 'express-rate-limit';
 import scanRoutes from './routes/scan';
 import honeypotRoutes from './routes/honeypot.js';
 import axios from 'axios';
+import signalRoutes from "./routes/signal.js";
+import mapData from "./routes/mapData";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5000
 const RL_API_URL = 'http://localhost:5000';
 
 app.use(cors());
@@ -21,13 +23,9 @@ const limiter = rateLimit({
 });
 
 app.use('/api/scan', limiter, scanRoutes);
-
+app.use("/api/map", mapData);
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-app.listen(PORT, () => {
-  console.log(`🔒 Security scanner API running on port ${PORT}`);
 });
 
 app.use('/api/honeypot', honeypotRoutes);
@@ -47,4 +45,9 @@ app.use('/api/rl', async (req, res) => {
       error: error.message
     });
   }
+});
+app.use("/api/signal", signalRoutes);
+
+app.listen(PORT, () => {
+  console.log(`✅ Backend running on http://localhost:${PORT}`);
 });
