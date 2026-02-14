@@ -1,0 +1,228 @@
+/* Add/modify these styles in your Guide.css */
+
+.guide-sidebar {
+  width: 320px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.98) 100%);
+  border-right: 1px solid rgba(255, 75, 75, 0.3);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 20px;
+  height: 100%;
+  overflow: hidden; /* Important: prevent outer overflow */
+}
+
+.guide-search {
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 75, 75, 0.2);
+  flex-shrink: 0; /* Prevent search from shrinking */
+}
+
+.guide-search input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 75, 75, 0.3);
+  border-radius: 4px;
+  padding: 8px 12px 8px 32px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.guide-search input:focus {
+  outline: none;
+  border-color: #ff4b4b;
+  box-shadow: 0 0 10px rgba(255, 75, 75, 0.3);
+}
+
+.guide-search-icon {
+  position: absolute;
+  left: 28px;
+  top: 24px;
+  color: #ff4b4b;
+  font-size: 16px;
+  opacity: 0.7;
+}
+
+/* Scrollable topic list - THIS IS THE KEY PART */
+.guide-topic-list {
+  flex: 1;
+  overflow-y: auto; /* Enable vertical scrolling */
+  padding: 8px 0;
+  min-height: 0; /* Important for flex child scrolling */
+  max-height: calc(15 * 48px); /* 15 rows × approximate row height (48px) */
+  
+  /* Custom scrollbar styling - optional but looks better */
+  scrollbar-width: thin;
+  scrollbar-color: #ff4b4b rgba(255, 75, 75, 0.1);
+}
+
+/* Webkit scrollbar styling (Chrome, Safari, Edge) */
+.guide-topic-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.guide-topic-list::-webkit-scrollbar-track {
+  background: rgba(255, 75, 75, 0.1);
+  border-radius: 3px;
+}
+
+.guide-topic-list::-webkit-scrollbar-thumb {
+  background: #ff4b4b;
+  border-radius: 3px;
+}
+
+.guide-topic-list::-webkit-scrollbar-thumb:hover {
+  background: #ff6b6b;
+}
+
+.guide-topic-item {
+  width: 100%;
+  padding: 12px 16px ;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #aaa;
+  font-size: 14px;
+  min-height: 48px; /* Fixed height for consistent row sizing */
+}
+
+.guide-topic-item:hover {
+  background: rgba(255, 75, 75, 0.1);
+  border-left-color: #ff4b4b;
+  color: #fff;
+}
+
+.guide-topic-item-active {
+  background: rgba(255, 75, 75, 0.15);
+  border-left-color: #ff4b4b;
+  color: #ff9f9f;
+  font-weight: 500;
+}
+
+.guide-topic-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guide-topic-category {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: rgba(255, 75, 75, 0.1);
+  border-radius: 3px;
+  color: #ff4b4b;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.guide-empty {
+  padding: 20px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+/* Main container adjustments */
+.guide-shell {
+  position: fixed;
+  top: 64px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+.guide-frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, rgba(0,0,0,0.95) 0%, rgba(20,0,0,0.98) 100%);
+  border: 1px solid rgba(255, 75, 75, 0.3);
+  border-radius: 8px;
+  margin: 20px;
+  overflow: hidden;
+  box-shadow: 0 0 30px rgba(255, 75, 75, 0.2);
+}
+
+.guide-frame-header {
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.8);
+  border-bottom: 1px solid rgba(255, 75, 75, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.guide-frame-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: #ff4b4b;
+  text-shadow: 0 0 10px rgba(255, 75, 75, 0.5);
+}
+
+.guide-header-pill {
+  padding: 4px 12px;
+  background: rgba(255, 75, 75, 0.15);
+  border: 1px solid #ff4b4b;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #ff9f9f;
+}
+
+.guide-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden; /* Important for proper scrolling */
+  min-height: 0; /* Critical for flex child scrolling */
+}
+
+/* Content area styling */
+.guide-content {
+  flex: 1;
+  padding: 24px 24px 50px 24px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.5);
+  min-height: 0;
+  
+  /* Content scrollbar styling */
+  scrollbar-width: thin;
+  scrollbar-color: #ff4b4b rgba(255, 75, 75, 0.1);
+}
+
+.guide-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.guide-content::-webkit-scrollbar-track {
+  background: rgba(255, 75, 75, 0.1);
+}
+
+.guide-content::-webkit-scrollbar-thumb {
+  background: #ff4b4b;
+  border-radius: 3px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .guide-sidebar {
+    width: 280px;
+  }
+  
+  .guide-frame {
+    margin: 10px;
+  }
+  
+  .guide-topic-list {
+    max-height: calc(10 * 48px); /* 10 rows on mobile */
+  }
+}

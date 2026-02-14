@@ -35,6 +35,7 @@ import GoogleDorkGenerator from "@/pages/tools/GoogleDorkGenerator";
 import PacketCapturer from "@/pages/tools/PacketCapturer";
 import RLTraining from "@/pages/RLTraining";
 import WorldMap from '@/components/WorldMap';
+import Guide from "@/pages/Guide";
 
 const AppRouter = () => {
   return (
@@ -74,6 +75,7 @@ const AppRouter = () => {
         <Route path="/honeypots" element={<HoneypotMonitor />} />
         <Route path="/rl-training" element={<RLTraining />} />
         <Route path="/world-map" element={<WorldMap />} />
+        <Route path="/guide" element={<Guide />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Layout>
