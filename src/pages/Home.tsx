@@ -476,19 +476,21 @@ const Home = () => {
         >
           {[
             { value: "99.9%", label: "UPTIME" },
-            { value: "10M+", label: "THREATS BLOCKED" },
+            { value: "25+", label: "TOOLS AVAILABLE" },
             { value: "24/7", label: "MONITORING" },
             { value: "<1ms", label: "RESPONSE TIME" },
           ].map((stat, i) => (
             <motion.div
               key={i}
               className="glass-panel rounded-lg p-6 text-center relative overflow-hidden group"
-              initial={{ opacity: 0, y: 50 }}
+              initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: i * 0.1 }}
               viewport={{ once: true }}
-              whileHover={{ scale: 1.05 }}
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.98 }}
+              transition={{ type: "spring", stiffness: 350, damping: 22 }}
             >
+                      
               <motion.div
                 className="absolute inset-0 bg-gradient-to-r from-cyber-red/20 to-cyber-cyan/20 opacity-0 group-hover:opacity-100"
                 transition={{ duration: 0.3 }}

@@ -3,6 +3,7 @@ import WebGLBackground from "../WebGLBackground";
 import CyberpunkCursor from "../CyberpunkCursor";
 import NavbarMenu from "../ui/navbar-menu";
 import { navigationItems } from "@/data/navigation";
+import Footer from "@/components/ui/footer";
 
 interface LayoutProps {
   children: ReactNode;
@@ -30,6 +31,7 @@ const Layout = ({ children }: LayoutProps) => {
       <main className="relative z-10 flex min-h-screen items-center justify-center p-4 pt-20">
         {children}
       </main>
+      <Footer />
     </div>
   );
 };
