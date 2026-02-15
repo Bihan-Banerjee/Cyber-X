@@ -46,7 +46,7 @@ const DNSRecon = () => {
   const [sortField, setSortField] = useState<SortField>("type");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [recordFilter, setRecordFilter] = useState("");
-  const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
+  const [typeFilters, setTypeFilters] = useState<Set<string>>(() => new Set<string>());
 
   const handleScan = async () => {
     if (!domain) return;
@@ -71,11 +71,11 @@ const DNSRecon = () => {
         throw new Error(errorData.error || "Scan failed");
       }
 
-      const data = await response.json();
+      const data: DNSReconResult = await response.json();
       setResult(data);
       
       // Initialize type filters with all found types
-      const types = new Set(data.records.map((r: DNSRecord) => r.type));
+      const types = new Set<string>(data.records.map(r => r.type));
       setTypeFilters(types);
     } catch (err: any) {
       setError(err.message || "Failed to connect to DNS recon service");

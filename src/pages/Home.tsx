@@ -525,7 +525,7 @@ const Home = () => {
                 className="glass-panel rounded-lg p-8 relative overflow-hidden group cursor-pointer"
                 initial={{ opacity: 0, y: 50, rotateX: -10 }}
                 whileInView={{ opacity: 1, y: 0, rotateX: 0 }}
-                transition={{ duration: 0.4, delay: feature.delay }}
+                transition={{ duration: 0.4, delay: feature.delay, type: "spring", stiffness: 400, damping: 25 }}
                 viewport={{ once: true }}
                 whileHover={{
                   scale: 1.04,
@@ -534,11 +534,6 @@ const Home = () => {
                       ? "rgba(255, 0, 51, 0.6)"
                       : "rgba(0, 255, 255, 0.6)"
                   }`,
-                }}
-                transition={{
-                  type: "spring",
-                  stiffness: 400,
-                  damping: 25,
                 }}
 
                 style={{

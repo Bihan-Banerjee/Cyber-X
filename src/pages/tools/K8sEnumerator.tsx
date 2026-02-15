@@ -43,6 +43,7 @@ interface K8sEnumerationResult {
 
 type SortField = "severity" | "type" | "namespace";
 type SortDirection = "asc" | "desc";
+type TabType = "resources" | "misconfigs";
 
 const ITEMS_PER_PAGE = 5;
 
@@ -53,7 +54,7 @@ const K8sEnumerator = () => {
   const [result, setResult] = useState<K8sEnumerationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [activeTab, setActiveTab] = useState<"resources" | "misconfigs">("misconfigs");
+  const [activeTab, setActiveTab] = useState<TabType>("misconfigs");
   
   // Sort & Filter states
   const [sortField, setSortField] = useState<SortField>("severity");
@@ -87,14 +88,14 @@ const K8sEnumerator = () => {
 
       const data = await response.json();
       setResult(data);
-    } catch (err: any) {
-      setError(err.message || "Failed to connect to K8s enumeration service");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to connect to K8s enumeration service");
     } finally {
       setIsScanning(false);
     }
   };
 
-  const getSeverityColor = (severity: string) => {
+  const getSeverityColor = (severity: string): string => {
     const colors: Record<string, string> = {
       critical: "bg-red-500/20 text-red-400 border-red-500/50",
       high: "bg-orange-500/20 text-orange-400 border-orange-500/50",
@@ -105,14 +106,14 @@ const K8sEnumerator = () => {
     return colors[severity] || colors.info;
   };
 
-  const getScoreColor = (score: number) => {
+  const getScoreColor = (score: number): string => {
     if (score >= 80) return "text-green-400";
     if (score >= 60) return "text-yellow-400";
     if (score >= 40) return "text-orange-400";
     return "text-red-400";
   };
 
-  const getRiskColor = (level: string) => {
+  const getRiskColor = (level: string): string => {
     const colors: Record<string, string> = {
       CRITICAL: "text-red-400",
       HIGH: "text-orange-400",
@@ -122,7 +123,7 @@ const K8sEnumerator = () => {
     return colors[level] || "text-gray-400";
   };
 
-  const downloadResults = () => {
+  const downloadResults = (): void => {
     if (!result) return;
 
     const csv = [
@@ -138,9 +139,10 @@ const K8sEnumerator = () => {
     a.href = url;
     a.download = `k8s_security_scan_${Date.now()}.csv`;
     a.click();
+    window.URL.revokeObjectURL(url);
   };
 
-  const toggleSeverityFilter = (severity: string) => {
+  const toggleSeverityFilter = (severity: string): void => {
     const newFilters = new Set(severityFilters);
     if (newFilters.has(severity)) {
       newFilters.delete(severity);
@@ -151,7 +153,7 @@ const K8sEnumerator = () => {
     setCurrentPage(1);
   };
 
-  const handleSort = (field: SortField) => {
+  const handleSort = (field: SortField): void => {
     if (sortField === field) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -161,41 +163,51 @@ const K8sEnumerator = () => {
     setCurrentPage(1);
   };
 
-  const getProcessedItems = () => {
+  const getProcessedItems = (): (K8sResource | K8sMisconfiguration)[] => {
     if (!result) return [];
 
-    let items = activeTab === "resources" 
-      ? result.resources 
-      : result.misconfigurations;
+    let items: (K8sResource | K8sMisconfiguration)[] =
+      activeTab === "resources"
+        ? result.resources 
+        : result.misconfigurations;
 
     // Filter by type/category
     if (typeFilter) {
-      items = items.filter((item: any) =>
-        (item.type || item.category || '').toLowerCase().includes(typeFilter.toLowerCase()) ||
-        (item.name || item.issue || '').toLowerCase().includes(typeFilter.toLowerCase())
-      );
+      items = items.filter((item) => {
+        const typeOrCategory = 'type' in item ? item.type : 'category' in item ? item.category : '';
+        const nameOrIssue = 'name' in item ? item.name : 'issue' in item ? item.issue : '';
+        
+        return typeOrCategory.toLowerCase().includes(typeFilter.toLowerCase()) ||
+               nameOrIssue.toLowerCase().includes(typeFilter.toLowerCase());
+      });
     }
 
     // Filter by severity
     if (severityFilters.size > 0) {
-      items = items.filter((item: any) => severityFilters.has(item.severity));
+      items = items.filter((item) => severityFilters.has(item.severity));
     }
 
     // Sort
-    const severityOrder = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
-    items.sort((a: any, b: any) => {
+    const severityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+    items.sort((a, b) => {
       let comparison = 0;
 
       switch (sortField) {
         case "severity":
           comparison = severityOrder[a.severity] - severityOrder[b.severity];
           break;
-        case "type":
-          comparison = (a.type || a.category).localeCompare(b.type || b.category);
+        case "type": {
+          const aType = 'type' in a ? a.type : 'category' in a ? a.category : '';
+          const bType = 'type' in b ? b.type : 'category' in b ? b.category : '';
+          comparison = aType.localeCompare(bType);
           break;
-        case "namespace":
-          comparison = (a.namespace || '').localeCompare(b.namespace || '');
+        }
+        case "namespace": {
+          const aNamespace = 'namespace' in a ? a.namespace : '';
+          const bNamespace = 'namespace' in b ? b.namespace : '';
+          comparison = aNamespace.localeCompare(bNamespace);
           break;
+        }
       }
 
       return sortDirection === "asc" ? comparison : -comparison;
@@ -210,11 +222,23 @@ const K8sEnumerator = () => {
   const endIndex = startIndex + ITEMS_PER_PAGE;
   const paginatedItems = processedItems.slice(startIndex, endIndex);
 
-  const goToNextPage = () => currentPage < totalPages && setCurrentPage(currentPage + 1);
-  const goToPrevPage = () => currentPage > 1 && setCurrentPage(currentPage - 1);
-  const goToPage = (page: number) => setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  const goToNextPage = (): void => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+  
+  const goToPrevPage = (): void => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+  
+  const goToPage = (page: number): void => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  };
 
-  const getPageNumbers = () => {
+  const getPageNumbers = (): (number | string)[] => {
     const pages: (number | string)[] = [];
     const maxVisible = 5;
 
@@ -243,9 +267,17 @@ const K8sEnumerator = () => {
     return pages;
   };
 
-  const getSortIcon = (field: SortField) => {
+  const getSortIcon = (field: SortField): JSX.Element | null => {
     if (sortField !== field) return null;
     return <span className="ml-1 text-cyber-red">{sortDirection === "asc" ? "↑" : "↓"}</span>;
+  };
+
+  const isMisconfiguration = (item: K8sResource | K8sMisconfiguration): item is K8sMisconfiguration => {
+    return 'category' in item;
+  };
+
+  const isResource = (item: K8sResource | K8sMisconfiguration): item is K8sResource => {
+    return 'type' in item && 'namespace' in item;
   };
 
   return (
@@ -466,60 +498,66 @@ const K8sEnumerator = () => {
 
               {/* Items List */}
               <div className="space-y-3">
-                {activeTab === "misconfigs" ? (
-                  paginatedItems.map((item: any, idx) => (
-                    <div key={`${item.category}-${startIndex + idx}`} className="glass-panel rounded p-4 hover:bg-black/40 transition-colors">
-                      <div className="flex items-start gap-3">
-                        <ShieldAlert className="w-5 h-5 text-red-400 flex-shrink-0 mt-1" />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h4 className="text-sm font-bold text-cyber-cyan">{item.issue}</h4>
-                            <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getSeverityColor(item.severity)}`}>
-                              {item.severity.toUpperCase()}
-                            </span>
-                            <span className="text-xs text-gray-500">• {item.category}</span>
-                          </div>
-                          <p className="text-xs text-gray-400 mb-1">Resource: <span className="text-cyber-cyan font-mono">{item.resource}</span></p>
-                          <p className="text-sm text-gray-400 mb-2">{item.description}</p>
-                          <div className="flex items-start gap-1 p-2 bg-cyber-cyan/5 border border-cyber-cyan/20 rounded">
-                            <CheckCircle className="w-3 h-3 text-cyber-cyan mt-0.5 flex-shrink-0" />
-                            <p className="text-xs text-cyber-cyan">{item.recommendation}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  paginatedItems.map((item: any, idx) => (
-                    <div key={`${item.type}-${item.name}-${startIndex + idx}`} className="glass-panel rounded p-4 hover:bg-black/40 transition-colors">
-                      <div className="flex items-start gap-3">
-                        <Box className="w-5 h-5 text-cyber-cyan flex-shrink-0 mt-1" />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h4 className="text-sm font-bold text-cyber-cyan">{item.name}</h4>
-                            <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getSeverityColor(item.severity)}`}>
-                              {item.severity.toUpperCase()}
-                            </span>
-                            <span className="text-xs text-gray-500">• {item.type}</span>
-                          </div>
-                          <p className="text-xs text-gray-400 mb-2">
-                            Namespace: <span className="text-cyber-cyan">{item.namespace}</span> • Status: <span className="text-green-400">{item.status}</span>
-                          </p>
-                          {item.issues.length > 0 && (
-                            <div className="p-2 bg-red-500/5 border border-red-500/20 rounded">
-                              <p className="text-xs text-red-400 font-semibold mb-1">Issues:</p>
-                              <ul className="list-disc list-inside space-y-0.5">
-                                {item.issues.map((issue: string, iIdx: number) => (
-                                  <li key={iIdx} className="text-xs text-gray-400">{issue}</li>
-                                ))}
-                              </ul>
+                {paginatedItems.map((item, idx) => {
+                  const itemKey = isMisconfiguration(item) 
+                    ? `misconfig-${item.category}-${item.issue}-${idx}`
+                    : `resource-${item.type}-${item.name}-${idx}`;
+
+                  if (isMisconfiguration(item)) {
+                    return (
+                      <div key={itemKey} className="glass-panel rounded p-4 hover:bg-black/40 transition-colors">
+                        <div className="flex items-start gap-3">
+                          <ShieldAlert className="w-5 h-5 text-red-400 flex-shrink-0 mt-1" />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <h4 className="text-sm font-bold text-cyber-cyan">{item.issue}</h4>
+                              <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getSeverityColor(item.severity)}`}>
+                                {item.severity.toUpperCase()}
+                              </span>
+                              <span className="text-xs text-gray-500">• {item.category}</span>
                             </div>
-                          )}
+                            <p className="text-xs text-gray-400 mb-1">Resource: <span className="text-cyber-cyan font-mono">{item.resource}</span></p>
+                            <p className="text-sm text-gray-400 mb-2">{item.description}</p>
+                            <div className="flex items-start gap-1 p-2 bg-cyber-cyan/5 border border-cyber-cyan/20 rounded">
+                              <CheckCircle className="w-3 h-3 text-cyber-cyan mt-0.5 flex-shrink-0" />
+                              <p className="text-xs text-cyber-cyan">{item.recommendation}</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
-                )}
+                    );
+                  } else {
+                    return (
+                      <div key={itemKey} className="glass-panel rounded p-4 hover:bg-black/40 transition-colors">
+                        <div className="flex items-start gap-3">
+                          <Box className="w-5 h-5 text-cyber-cyan flex-shrink-0 mt-1" />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <h4 className="text-sm font-bold text-cyber-cyan">{item.name}</h4>
+                              <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getSeverityColor(item.severity)}`}>
+                                {item.severity.toUpperCase()}
+                              </span>
+                              <span className="text-xs text-gray-500">• {item.type}</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mb-2">
+                              Namespace: <span className="text-cyber-cyan">{item.namespace}</span> • Status: <span className="text-green-400">{item.status}</span>
+                            </p>
+                            {item.issues.length > 0 && (
+                              <div className="p-2 bg-red-500/5 border border-red-500/20 rounded">
+                                <p className="text-xs text-red-400 font-semibold mb-1">Issues:</p>
+                                <ul className="list-disc list-inside space-y-0.5">
+                                  {item.issues.map((issue, iIdx) => (
+                                    <li key={iIdx} className="text-xs text-gray-400">{issue}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                })}
               </div>
 
               {/* Pagination */}

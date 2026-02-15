@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
 
-    "declaration": false,
+    "declaration": true,
     "composite": true
   },
   "include": ["src/server/**/*"]
