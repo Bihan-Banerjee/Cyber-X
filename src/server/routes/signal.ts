@@ -4,6 +4,23 @@ import { parse } from "csv-parse/sync";
 
 const router = Router();
 
+/* -------------------------
+   Types
+-------------------------- */
+
+interface MLabCountryRow {
+  client_country?: string;
+  country_code?: string;
+
+  mean_download_mbps?: string;
+  mean_download_throughput_mbps?: string;
+
+  mean_upload_mbps?: string;
+  mean_upload_throughput_mbps?: string;
+
+  mean_rtt_ms?: string;
+}
+
 router.get("/countries", async (_req, res) => {
   try {
     const response = await fetch(
@@ -12,7 +29,7 @@ router.get("/countries", async (_req, res) => {
 
     const csvText = await response.text();
 
-    // DEBUG: ensure we actually got CSV
+    // Ensure we actually got CSV
     if (!csvText.includes("country")) {
       console.error("Unexpected CSV content (first 200 chars):");
       console.error(csvText.slice(0, 200));
@@ -22,21 +39,28 @@ router.get("/countries", async (_req, res) => {
     const records = parse(csvText, {
       columns: true,
       skip_empty_lines: true,
-    });
+    }) as MLabCountryRow[];
 
-    const results: any[] = [];
+    const results: {
+      country: string;
+      download: number;
+      upload: number;
+      latency: number;
+    }[] = [];
 
     for (const row of records) {
-      // These columns EXIST in this dataset
       const country = row.client_country || row.country_code;
+
       const download = Number(
         row.mean_download_mbps ??
-        row.mean_download_throughput_mbps
+          row.mean_download_throughput_mbps
       );
+
       const upload = Number(
         row.mean_upload_mbps ??
-        row.mean_upload_throughput_mbps
+          row.mean_upload_throughput_mbps
       );
+
       const latency = Number(row.mean_rtt_ms);
 
       if (!country || Number.isNaN(download)) continue;

@@ -38,8 +38,37 @@ import { logToolActivity, getRecentToolActivity } from '../utils/activityLogger.
 import { getSystemResources } from '../scanners/systemResources.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
 
-const router = express.Router();
 
+// ---------- Result Type Fixes ----------
+
+interface SinglePortResult {
+  port: number;
+  protocol: string;
+  state: string;
+}
+
+
+interface OSFingerprintResult {
+  os: string;
+}
+
+interface CrackResult {
+  cracked?: string[];
+}
+
+interface FuzzerResult {
+  found?: string[];
+}
+
+interface CipherAnalysisResult {
+  likelyCipher?: string;
+}
+
+interface VulnFuzzResult {
+  vulnerabilityTypes?: string[];
+}
+
+const router = express.Router();
 // Configure multer for memory storage
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -93,8 +122,14 @@ router.post('/ports', async (req, res) => {
       concurrency: safeConcurrency,
       retries: 2,
     });
-
-    logToolActivity('Port Scanner', `Completed scan on ${target} - Found ${results.openPorts.length} open ports`, 'success');
+    const openPorts = Array.isArray(results)
+      ? (results as SinglePortResult[]).filter(r => r.state === 'open').length
+      : 0;
+    logToolActivity(
+      'Port Scanner',
+      `Completed scan on ${target} - Found ${openPorts} open ports`,
+      'success'
+    );
 
     res.json({
       target,
@@ -126,12 +161,12 @@ router.post('/os-fingerprint', async (req, res) => {
     }
 
     const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
-
+    
     logToolActivity('OS Fingerprint', `Started fingerprinting ${target}`, 'info');
 
     const result = await performOSFingerprint(target, safeTimeout);
-
-    logToolActivity('OS Fingerprint', `Detected ${result.os} on ${target}`, 'success');
+    const osResult = result as unknown as OSFingerprintResult;
+    logToolActivity('OS Fingerprint', `Detected ${osResult.os} on ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
@@ -351,8 +386,8 @@ router.post('/hash-crack', async (req, res) => {
     logToolActivity('Hash Cracker', `Attempting to crack ${hashes.length} hashes`, 'info');
 
     const result = await performHashCracking(hashes, safeTimeout);
-
-    logToolActivity('Hash Cracker', `Cracked ${result.cracked?.length || 0} of ${hashes.length} hashes`, 'success');
+    const crackResult = result as unknown as CrackResult;
+    logToolActivity('Hash Cracker', `Cracked ${crackResult.cracked?.length || 0} of ${hashes.length} hashes`, 'success');
 
     res.json(result);
   } catch (error: any) {
@@ -379,8 +414,8 @@ router.post('/dir-fuzz', async (req, res) => {
     logToolActivity('Directory Fuzzer', `Fuzzing directories on ${target}`, 'info');
 
     const result = await performDirectoryFuzzing(target, safeTimeout);
-
-    logToolActivity('Directory Fuzzer', `Found ${result.found?.length || 0} directories on ${target}`, 'success');
+    const fuzzResult = result as unknown as FuzzerResult;
+    logToolActivity('Directory Fuzzer', `Found ${fuzzResult.found?.length || 0} directories on ${target}`, 'success');
 
     res.json(result);
   } catch (error: any) {
@@ -493,8 +528,8 @@ router.post('/cipher-analyze', async (req, res) => {
     logToolActivity('Cipher Analyzer', `Analyzing cipher text`, 'info');
 
     const result = await analyzeCipher(input);
-
-    logToolActivity('Cipher Analyzer', `Analysis completed - Detected ${result.likelyCipher}`, 'success');
+    const cipherAnalysis = result as unknown as CipherAnalysisResult;
+    logToolActivity('Cipher Analyzer', `Analysis completed - Detected ${cipherAnalysis.likelyCipher}`, 'success');
 
     res.json(result);
   } catch (error: any) {
@@ -519,12 +554,10 @@ router.post('/vuln-fuzz', async (req, res) => {
     const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
 
     logToolActivity('Vulnerability Fuzzer', `Fuzzing vulnerabilities on ${target}`, 'info');
-
+    
     const result = await performVulnerabilityFuzzing(target, safeTimeout);
-
-    logToolActivity('Vulnerability Fuzzer', `Found ${result.vulnerabilities?.length || 0} potential vulnerabilities`, result.vulnerabilities?.length ? 'warning' : 'success');
-
-    res.json(result);
+    const vulnResult = result as unknown as VulnFuzzResult;
+    logToolActivity('Vulnerability Fuzzer', `Found ${vulnResult.vulnerabilityTypes?.length || 0} potential vulnerabilities`,vulnResult.vulnerabilityTypes?.length ? 'warning' : 'success');res.json(result);
   } catch (error: any) {
     logToolActivity('Vulnerability Fuzzer', `Fuzzing failed: ${error.message}`, 'warning');
     console.error('Vulnerability fuzzing error:', error);
