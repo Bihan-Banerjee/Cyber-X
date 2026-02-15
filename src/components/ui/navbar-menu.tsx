@@ -3,7 +3,6 @@ import { Menu, X } from "lucide-react";
 import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion";
 import { NavLink } from "@/components/navlink";
 import { Link } from "react-router-dom";
-
 interface NavItem {
   name: string;
   path: string;
@@ -36,18 +35,34 @@ const NavbarMenu = ({ items }: NavbarMenuProps) => {
         <div className="flex items-center justify-between h-16">
 
           {/* LOGO */}
-          <Link to="/" className="flex items-center space-x-2 group">
+          <Link to="/" className="flex items-center space-x-3 group">
             <div
-              className="w-8 h-8 bg-cyber-red rounded flex items-center justify-center
-                         group-hover:shadow-[0_0_20px_rgba(255,0,51,0.8)]
-                         transition-all duration-300"
+              className="
+                relative flex items-center justify-center
+                rounded-full p-[3px]
+                bg-gradient-to-br from-cyber-red/40 via-transparent to-cyber-cyan/40 
+                transition-all duration-300
+                group-hover:scale-105
+                animate-pulse [animation-duration:5s] [animation-timing-function:ease-in-out]
+              "
             >
-              <span className="text-white font-bold text-xl">X</span>
+              <img
+                src="image.png"
+                alt="CyberX Logo"
+                className="
+                  w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10
+                  object-contain rounded-full
+                  drop-shadow-[0_0_12px_rgba(255,0,80,0.7)]
+                "
+              />
             </div>
 
             <span
-              className="text-cyber-cyan text-xl font-bold tracking-wider
-                         group-hover:text-cyber-red transition-colors"
+              className="
+                text-cyber-cyan text-xl font-bold tracking-wider
+                transition-colors duration-300
+                group-hover:text-cyber-red
+              "
             >
               CYBERX
             </span>

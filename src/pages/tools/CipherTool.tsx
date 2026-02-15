@@ -55,7 +55,7 @@ const CipherTool = () => {
 
     try {
       if (mode === "analyze") {
-        const response = await fetch("http://localhost:3001/api/scan/cipher-analyze", {
+        const response = await fetch("http://localhost:5000/api/scan/cipher-analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ input: inputText }),
@@ -65,7 +65,7 @@ const CipherTool = () => {
         const data = await response.json();
         setAnalysis(data);
       } else {
-        const response = await fetch("http://localhost:3001/api/scan/cipher-process", {
+        const response = await fetch("http://localhost:5000/api/scan/cipher-process", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

@@ -39,7 +39,7 @@ const RSAESEncryption = () => {
     setResult(null);
 
     try {
-      const response = await fetch("http://localhost:3001/api/scan/crypto-process", {
+      const response = await fetch("http://localhost:5000/api/scan/crypto-process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -72,7 +72,7 @@ const RSAESEncryption = () => {
   const handleGenerateKeys = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch("http://localhost:3001/api/scan/crypto-generate-keys", {
+      const response = await fetch("http://localhost:5000/api/scan/crypto-generate-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

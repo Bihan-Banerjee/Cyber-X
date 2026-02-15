@@ -48,7 +48,7 @@ const HoneypotMonitor = () => {
 
   const fetchHoneypotStatus = async () => {
     try {
-      const response = await fetch("http://localhost:3001/api/honeypot/status");
+      const response = await fetch("http://localhost:5000/api/honeypot/status");
       const data = await response.json();
       setHoneypots(data.honeypots);
       setLoading(false);
@@ -59,7 +59,7 @@ const HoneypotMonitor = () => {
 
   const fetchRecentAttacks = async () => {
     try {
-      const response = await fetch("http://localhost:3001/api/honeypot/attacks/recent?limit=20");
+      const response = await fetch("http://localhost:5000/api/honeypot/attacks/recent?limit=20");
       const data = await response.json();
       setRecentAttacks(data.attacks);
     } catch (error) {
@@ -69,7 +69,7 @@ const HoneypotMonitor = () => {
 
   const startHoneypot = async (type: string) => {
     try {
-      await fetch(`http://localhost:3001/api/honeypot/start/${type}`, { method: "POST" });
+      await fetch(`http://localhost:5000/api/honeypot/start/${type}`, { method: "POST" });
       fetchHoneypotStatus();
     } catch (error) {
       console.error("Failed to start honeypot:", error);
@@ -78,7 +78,7 @@ const HoneypotMonitor = () => {
 
   const stopHoneypot = async (type: string) => {
     try {
-      await fetch(`http://localhost:3001/api/honeypot/stop/${type}`, { method: "POST" });
+      await fetch(`http://localhost:5000/api/honeypot/stop/${type}`, { method: "POST" });
       fetchHoneypotStatus();
     } catch (error) {
       console.error("Failed to stop honeypot:", error);

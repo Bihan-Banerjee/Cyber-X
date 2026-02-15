@@ -84,7 +84,7 @@ const VideoSteganography = () => {
       formData.append('secretMessage', secretMessage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/video-stego-hide", {
+      const response = await fetch("http://localhost:5000/api/scan/video-stego-hide", {
         method: "POST",
         body: formData,
       });
@@ -115,7 +115,7 @@ const VideoSteganography = () => {
       formData.append('stegoVideo', stegoVideo);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/video-stego-extract", {
+      const response = await fetch("http://localhost:5000/api/scan/video-stego-extract", {
         method: "POST",
         body: formData,
       });

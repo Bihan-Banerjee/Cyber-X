@@ -77,7 +77,7 @@ const DocumentSteganography = () => {
       formData.append('secretMessage', secretMessage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/doc-stego-hide", {
+      const response = await fetch("http://localhost:5000/api/scan/doc-stego-hide", {
         method: "POST",
         body: formData,
       });
@@ -108,7 +108,7 @@ const DocumentSteganography = () => {
       formData.append('stegoDocument', stegoDocument);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/doc-stego-extract", {
+      const response = await fetch("http://localhost:5000/api/scan/doc-stego-extract", {
         method: "POST",
         body: formData,
       });

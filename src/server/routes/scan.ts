@@ -1145,18 +1145,18 @@ router.get('/recent-tools', async (req, res) => {
 });
 
 // Get System Resources
-router.get('/system-resources', async (req, res) => {
-  try {
-    const result = getSystemResources();
-    res.json(result);
-  } catch (error: any) {
-    console.error('System resources error:', error);
-    res.status(500).json({
-      error: 'Failed to get system resources',
-      message: error.message,
-    });
-  }
-});
+//router.get('/system-resources', async (req, res) => {
+//  try {
+//    const result = getSystemResources();
+//    res.json(result);
+//  } catch (error: any) {
+//    console.error('System resources error:', error);
+//    res.status(500).json({
+//      error: 'Failed to get system resources',
+//      message: error.message,
+//    });
+//  }
+//});
 
 // Rate limiter: max 30 requests per minute
 const resourceLimiter = createRateLimiter(30, 60000);

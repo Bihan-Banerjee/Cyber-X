@@ -182,7 +182,7 @@ const GoogleDorkGenerator = () => {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:3001/api/scan/osint-search", {
+      const response = await fetch("http://localhost:5000/api/scan/osint-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: generatedDork }),

@@ -83,7 +83,7 @@ const ImageMetadataExtractor = () => {
       const formData = new FormData();
       formData.append('image', uploadedFile);
 
-      const response = await fetch("http://localhost:3001/api/scan/image-metadata", {
+      const response = await fetch("http://localhost:5000/api/scan/image-metadata", {
         method: "POST",
         body: formData,
       });

@@ -50,7 +50,7 @@ const ServiceDetection = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:3001/api/scan/service-detect", {
+      const response = await fetch("http://localhost:5000/api/scan/service-detect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

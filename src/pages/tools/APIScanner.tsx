@@ -65,7 +65,7 @@ const APIScanner = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:3001/api/scan/api-scanner", {
+      const response = await fetch("http://localhost:5000/api/scan/api-scanner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

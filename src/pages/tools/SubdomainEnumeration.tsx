@@ -52,7 +52,7 @@ const SubdomainEnumeration = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:3001/api/scan/subdomains", {
+      const response = await fetch("http://localhost:5000/api/scan/subdomains", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

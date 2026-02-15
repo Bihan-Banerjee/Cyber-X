@@ -79,7 +79,7 @@ const AudioSteganography = () => {
       formData.append('secretMessage', secretMessage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/audio-stego-hide", {
+      const response = await fetch("http://localhost:5000/api/scan/audio-stego-hide", {
         method: "POST",
         body: formData,
       });
@@ -110,7 +110,7 @@ const AudioSteganography = () => {
       formData.append('stegoAudio', stegoAudio);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/audio-stego-extract", {
+      const response = await fetch("http://localhost:5000/api/scan/audio-stego-extract", {
         method: "POST",
         body: formData,
       });

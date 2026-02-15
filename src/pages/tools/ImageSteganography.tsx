@@ -79,7 +79,7 @@ const ImageSteganography = () => {
       formData.append('secretMessage', secretMessage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/stego-hide", {
+      const response = await fetch("http://localhost:5000/api/scan/stego-hide", {
         method: "POST",
         body: formData,
       });
@@ -110,7 +110,7 @@ const ImageSteganography = () => {
       formData.append('stegoImage', stegoImage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:3001/api/scan/stego-extract", {
+      const response = await fetch("http://localhost:5000/api/scan/stego-extract", {
         method: "POST",
         body: formData,
       });
