@@ -191,7 +191,8 @@ export async function performWHOISLookup(domain: string): Promise<WHOISResult> {
           return;
         }
 
-        const result = parseWHOISData(cleanDomain, data);
+        const raw = Array.isArray(data) ? data.join("\n") : data;
+        const result = parseWHOISData(cleanDomain, raw);
         resolve(result);
       });
     } catch (error: any) {
