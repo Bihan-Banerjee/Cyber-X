@@ -1,4 +1,4 @@
-import whois from 'whois';
+import * as whois from 'whois';
 
 export interface WHOISResult {
   domain: string;
