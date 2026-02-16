@@ -1,11 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import scanRoutes from './routes/scan';
+import scanRoutes from './routes/scan.js';
 import honeypotRoutes from './routes/honeypot.js';
 import axios from 'axios';
 import signalRoutes from "./routes/signal.js";
-import mapData from "./routes/mapData";
+import mapData from "./routes/mapData.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000
