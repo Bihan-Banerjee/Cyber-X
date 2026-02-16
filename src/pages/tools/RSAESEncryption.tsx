@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Key, Lock, Unlock, Copy, Check, Download, RefreshCw } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface EncryptionResult {
   algorithm: string;
   operation: string;
@@ -39,7 +39,7 @@ const RSAESEncryption = () => {
     setResult(null);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/crypto-process", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/crypto-process`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -72,7 +72,7 @@ const RSAESEncryption = () => {
   const handleGenerateKeys = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch("http://localhost:5000/api/scan/crypto-generate-keys", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/crypto-generate-keys`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

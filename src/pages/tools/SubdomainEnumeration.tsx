@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Globe, CheckCircle, XCircle, Download } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface Subdomain {
   subdomain: string;
   ip?: string;
@@ -52,7 +52,7 @@ const SubdomainEnumeration = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/subdomains", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/subdomains`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

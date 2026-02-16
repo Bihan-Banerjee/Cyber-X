@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Container, ShieldAlert, CheckCircle, XCircle, AlertTriangle, Download, Package } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface Vulnerability {
   cve: string;
   severity: "critical" | "high" | "medium" | "low";
@@ -69,7 +69,7 @@ const ContainerScanner = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/container-scan", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/container-scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Network, Download, Copy, Check, Upload, X } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface PacketLayer {
   protocol: string;
   fields: Record<string, any>;
@@ -91,7 +91,7 @@ const PacketAnalyzer = () => {
         });
       }
 
-      const response = await fetch("http://localhost:5000/api/scan/packet-analyze", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/packet-analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

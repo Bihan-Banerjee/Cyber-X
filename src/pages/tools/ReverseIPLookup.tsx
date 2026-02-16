@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Globe, Server, ExternalLink, Copy, Check, Download } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface HostedDomain {
   domain: string;
   firstSeen?: string;
@@ -49,7 +49,7 @@ const ReverseIPLookup = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/reverse-ip", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/reverse-ip`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

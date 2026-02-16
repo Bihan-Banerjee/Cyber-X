@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
 import { Activity, Shield, AlertTriangle, TrendingUp } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface ToolActivity {
   toolName: string;
   timestamp: string;
@@ -91,7 +91,7 @@ const Dashboard = () => {
 
   const fetchRecentTools = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/scan/recent-tools");
+      const response = await fetch(`${API_BASE_URL}/api/scan/recent-tools`);
       if (response.ok) {
         const data = await response.json();
         setRecentTools(data.tools);
@@ -103,7 +103,7 @@ const Dashboard = () => {
 
   const fetchSystemResources = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/scan/system-resources");
+      const response = await fetch(`${API_BASE_URL}/api/scan/system-resources`);
       if (response.ok) {
         const data = await response.json();
         setSystemResources(data.resources);

@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, AlertCircle, Upload, X, FileText, Eye, EyeOff, Download, Copy, Check } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface HideResult {
   success: boolean;
   message: string;
@@ -77,7 +77,7 @@ const DocumentSteganography = () => {
       formData.append('secretMessage', secretMessage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:5000/api/scan/doc-stego-hide", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/doc-stego-hide`, {
         method: "POST",
         body: formData,
       });
@@ -108,7 +108,7 @@ const DocumentSteganography = () => {
       formData.append('stegoDocument', stegoDocument);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:5000/api/scan/doc-stego-extract", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/doc-stego-extract`, {
         method: "POST",
         body: formData,
       });

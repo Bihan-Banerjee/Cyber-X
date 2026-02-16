@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Activity, Database, Server, Shield } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface ServiceInfo {
   port: number;
   protocol: string;
@@ -50,7 +50,7 @@ const ServiceDetection = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/service-detect", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/service-detect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

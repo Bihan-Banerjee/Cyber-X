@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Box, ShieldAlert, CheckCircle, XCircle, AlertTriangle, Download, Lock, Unlock } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface K8sResource {
   type: string;
   name: string;
@@ -71,7 +71,7 @@ const K8sEnumerator = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/k8s-enum", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/k8s-enum`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

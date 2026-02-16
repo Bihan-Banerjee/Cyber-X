@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Search, Copy, Check, ExternalLink, Trash2, Plus, AlertCircle, Download } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface DorkTemplate {
   name: string;
   category: string;
@@ -182,7 +182,7 @@ const GoogleDorkGenerator = () => {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/osint-search", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/osint-search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: generatedDork }),

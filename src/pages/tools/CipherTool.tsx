@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Key, Lock, Unlock, BarChart3, Copy, Check, ArrowRightLeft } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface CipherResult {
   cipherType: string;
   operation: string;
@@ -55,7 +55,7 @@ const CipherTool = () => {
 
     try {
       if (mode === "analyze") {
-        const response = await fetch("http://localhost:5000/api/scan/cipher-analyze", {
+        const response = await fetch(`${API_BASE_URL}/api/scan/cipher-analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ input: inputText }),
@@ -65,7 +65,7 @@ const CipherTool = () => {
         const data = await response.json();
         setAnalysis(data);
       } else {
-        const response = await fetch("http://localhost:5000/api/scan/cipher-process", {
+        const response = await fetch(`${API_BASE_URL}/api/scan/cipher-process`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

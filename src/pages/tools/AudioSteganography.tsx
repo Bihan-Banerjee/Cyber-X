@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, AlertCircle, Upload, X, Music, Eye, EyeOff, Download, Copy, Check, Volume2 } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface HideResult {
   success: boolean;
   message: string;
@@ -79,7 +79,7 @@ const AudioSteganography = () => {
       formData.append('secretMessage', secretMessage);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:5000/api/scan/audio-stego-hide", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/audio-stego-hide`, {
         method: "POST",
         body: formData,
       });
@@ -110,7 +110,7 @@ const AudioSteganography = () => {
       formData.append('stegoAudio', stegoAudio);
       if (password) formData.append('password', password);
 
-      const response = await fetch("http://localhost:5000/api/scan/audio-stego-extract", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/audio-stego-extract`, {
         method: "POST",
         body: formData,
       });

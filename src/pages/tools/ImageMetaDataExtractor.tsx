@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle, Upload, X, Image as ImageIcon, MapPin, Camera, Calendar, Copy, Check, Download, ExternalLink } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface MetadataResult {
   fileName: string;
   fileSize: string;
@@ -83,7 +83,7 @@ const ImageMetadataExtractor = () => {
       const formData = new FormData();
       formData.append('image', uploadedFile);
 
-      const response = await fetch("http://localhost:5000/api/scan/image-metadata", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/image-metadata`, {
         method: "POST",
         body: formData,
       });

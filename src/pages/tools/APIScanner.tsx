@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Zap, CheckCircle, XCircle, AlertTriangle, Download } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface APIEndpoint {
   url: string;
   method: string;
@@ -65,7 +65,7 @@ const APIScanner = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/api-scanner", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/api-scanner`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

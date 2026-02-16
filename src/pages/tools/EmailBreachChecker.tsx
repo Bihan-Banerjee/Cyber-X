@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Mail, ShieldAlert, Calendar, Database, ExternalLink, Download } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface Breach {
   name: string;
   title: string;
@@ -60,7 +60,7 @@ const EmailBreachChecker = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/breach-check", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/breach-check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),

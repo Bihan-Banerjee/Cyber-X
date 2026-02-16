@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, AlertCircle, Radio, Square, Download, Trash2, RefreshCw } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface NetworkInterface {
   name: string;
   description: string;
@@ -53,7 +53,7 @@ const PacketCapturer = () => {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/network-interfaces");
+      const response = await fetch(`${API_BASE_URL}/api/scan/network-interfaces`);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -80,7 +80,7 @@ const PacketCapturer = () => {
     setPackets([]);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/start-capture", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/start-capture`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -111,7 +111,7 @@ const PacketCapturer = () => {
         intervalRef.current = null;
       }
 
-      const response = await fetch("http://localhost:5000/api/scan/stop-capture", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/stop-capture`, {
         method: "POST",
       });
 
@@ -128,7 +128,7 @@ const PacketCapturer = () => {
 
   const fetchPackets = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/scan/capture-packets");
+      const response = await fetch(`${API_BASE_URL}/api/scan/capture-packets`);
 
       if (!response.ok) return;
 
@@ -148,7 +148,7 @@ const PacketCapturer = () => {
 
   const downloadPcap = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/scan/download-pcap");
+      const response = await fetch(`${API_BASE_URL}/api/scan/download-pcap`);
 
       if (!response.ok) {
         throw new Error("Failed to download PCAP file");

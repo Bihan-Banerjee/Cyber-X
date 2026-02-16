@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, Search, Calendar, User, Globe, Server, Shield, Copy, Check } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface WHOISData {
   domain: string;
   registrar?: string;
@@ -49,7 +49,7 @@ const WHOISLookup = () => {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/whois", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/whois`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain }),

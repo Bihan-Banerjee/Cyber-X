@@ -3,7 +3,7 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Database, CheckCircle, XCircle, Lock, Unlock, ExternalLink, Download, Copy, Check } from "lucide-react";
-
+import { API_BASE_URL } from "@/lib/api";
 interface S3Bucket {
   name: string;
   url: string;
@@ -67,7 +67,7 @@ const S3BucketFinder = () => {
     setCurrentPage(1);
 
     try {
-      const response = await fetch("http://localhost:5000/api/scan/s3-finder", {
+      const response = await fetch(`${API_BASE_URL}/api/scan/s3-finder`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
