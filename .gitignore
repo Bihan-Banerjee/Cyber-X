@@ -212,3 +212,153 @@ junit.xml
 !.vscode/extensions.json
 !.gitkeep
 !README.md
+
+# ══════════════════════════════════════════════════════════════════
+#  CyberX — .gitignore
+#  Keep: source code, configs (no keys), requirements, README
+#  Ignore: models, training artifacts, wordlists, build outputs,
+#          secrets, OS/IDE clutter, Docker volumes
+# ══════════════════════════════════════════════════════════════════
+
+
+# ── Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments (whichever name you use)
+venv/
+.venv/
+env/
+.env/
+ENV/
+venv.bak/
+
+# ── RL: trained model weights ──────────────────────────────────────
+# These are large binary files (10MB–500MB each).
+# Store in Google Drive / OneDrive instead, or use Git LFS.
+src/server/rl/models/
+models/
+*.zip
+
+# Exception: keep the example/seed model configs if you add them
+# !src/server/rl/models/example_config.json
+
+# ── RL: training artifacts ─────────────────────────────────────────
+src/server/rl/logs/
+logs/
+src/server/rl/data/
+data/
+
+# Training state (auto-generated, recreated on next run)
+trainer_state.json
+
+# Keep training history JSON — useful for paper figures
+# training_history.json  ← intentionally NOT ignored
+
+# Keep results plots
+# src/server/rl/models/*/results/*.png  ← intentionally NOT ignored
+
+# ── RL: generated datasets ─────────────────────────────────────────
+*.npz
+*.npy
+*.pt
+*.pth
+
+# ── Large wordlists ────────────────────────────────────────────────
+wordlist/
+*.txt.gz
+rockyou*
+
+# ── Node / Frontend ────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+
+# Frontend build output
+dist/
+build/
+.next/
+out/
+
+# ── TypeScript build artifacts ─────────────────────────────────────
+*.tsbuildinfo
+tsconfig.app.tsbuildinfo
+tsconfig.node.tsbuildinfo
+tsconfig.server.tsbuildinfo
+
+# ── Environment / secrets ──────────────────────────────────────────
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# If you ever add secrets to config.json, rename it config.secret.json
+# and add that here. The tracked config.json should have no real keys.
+
+# ── Docker volumes and generated honeypot data ─────────────────────
+docker/cowrie/var/
+docker/dionaea/var/
+docker/zeek/logs/
+*.log
+honeypot_logs/
+
+# ── OS clutter ─────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── IDE / editor ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── Coverage / testing ─────────────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.hypothesis/
+coverage.xml
+*.cover
+.nyc_output/
+
+# ── Jupyter (if used for analysis) ─────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Misc ────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.orig
+repomix-output.*
+export.md

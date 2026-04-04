@@ -1,27 +1,53 @@
 {
   "model_paths": {
-    "attacker_best": "./models/production/attacker_iter_20.zip",
-    "defender_best": "./models/production/defender_iter_20.zip",
-    "attacker_pretrained": "./models/pretrained/attacker_pretrained.zip",
-    "production_dir": "./models/production",
-    "pretrained_dir": "./models/pretrained"
+    "attacker_best": "./models/cyberx_marl/attacker_best.zip",
+    "defender_best": "./models/cyberx_marl/defender_best.zip",
+    "checkpoints_dir": "./models/cyberx_marl/checkpoints",
+    "ghosts_dir": "./models/cyberx_marl/ghosts",
+    "oracle_datasets_dir": "./data/oracle_datasets"
   },
   "training": {
-    "default_iterations": 10,
-    "default_timesteps": 50000,
-    "eval_episodes": 20,
-    "checkpoint_frequency": 2
+    "n_iterations": 30,
+    "timesteps_per_iter": 100000,
+    "eval_episodes": 50,
+    "n_envs": 8,
+    "device": "auto",
+    "learning_rate": 0.0003,
+    "ent_coef": 0.01,
+    "run_bc_phase": true,
+    "run_llm_oracle_phase": true,
+    "curriculum": {
+      "promo_threshold": 0.60,
+      "promo_streak": 3,
+      "max_stage_iterations": 20
+    }
   },
   "llm": {
     "enabled": true,
+    "_comment_enabled": "Set to true once you have an API key configured",
+
     "provider": "ollama",
-    "model": "llama3.2:3b",
+    "_comment_provider": "Options: gemini | ollama | anthropic | openai",
+
+    "model": "codellama:13b",
+    "_comment_model_gemini": "Free tier. Set GEMINI_API_KEY env var.",
+    "_comment_model_ollama": "For CodeLlama via Ollama: set provider=ollama, model=codellama",
+    "_comment_model_ollama2": "Make sure ollama is running: ollama serve && ollama pull codellama",
+
     "api_base": "http://localhost:11434",
-    "consult_probability": 0.2,
-    "temperature": 0.7
+    "_comment_api_base": "Only used for ollama provider",
+
+    "api_key": "",
+    "_comment_api_key": "Gemini: set GEMINI_API_KEY env var. Anthropic: ANTHROPIC_API_KEY. Or paste key here.",
+
+    "consult_probability": 0.25,
+    "_comment_consult_prob": "Fraction of steps where LLM is queried (cost/rate control)",
+    "temperature": 0.3,
+    "cache_size": 4096
   },
   "logging": {
     "tensorboard_dir": "./logs",
-    "save_replays": true
+    "results_dir": "./models/cyberx_marl/results",
+    "save_plots_every_n_iters": 5
   }
 }

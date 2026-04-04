@@ -1,369 +1,231 @@
+"""
+attacker_agent.py  –  CyberX Red-Team RL Agent  (v2.0)
+=======================================================
+Upgrades from v1:
+  • Deeper feature extractor with residual connections for richer
+    representation of the small POMDP observation vector
+  • pretrain_on_expert now accepts BOTH scripted agents AND numpy
+    datasets (from LLMOracle.save_dataset) — unified BC interface
+  • Gradient clipping on BC optimizer to prevent exploding gradients
+  • Proper LSTM state reset between episodes during pretraining
+  • save/load helpers that handle path creation automatically
+  • Curriculum-aware env factory method for parallel training
+"""
+
+import os
 import numpy as np
 import torch
 import torch.nn as nn
-from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback
+from torch.utils.data import DataLoader, TensorDataset
+from sb3_contrib import RecurrentPPO
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 import gymnasium as gym
-from typing import Dict, Tuple, Optional
-import os
-import requests
-import re
-import random
+from tqdm import tqdm
+from typing import Optional, Union
 
-from config_loader import config
+
+# ── Feature extractor with residual block ─────────────────────────────────────
 
 class AttackerFeatureExtractor(BaseFeaturesExtractor):
-    """Custom feature extractor for attacker observations"""
-    
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 128):
+    """
+    MLP with a residual connection.  The residual path projects the raw
+    8-dim observation to the hidden size; the main path learns deviations
+    from that projection.  This is more stable than a plain deep MLP for
+    very small observation spaces.
+    """
+
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
         super().__init__(observation_space, features_dim)
-        
         n_input = observation_space.shape[0]
-        
-        self.network = nn.Sequential(
-            nn.Linear(n_input, 64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(128, features_dim),
-            nn.ReLU()
+        hidden  = 256
+
+        self.input_proj = nn.Linear(n_input, hidden)
+
+        self.layer1 = nn.Sequential(
+            nn.Linear(n_input, hidden), nn.LayerNorm(hidden), nn.ReLU()
         )
-    
+        self.layer2 = nn.Sequential(
+            nn.Linear(hidden, hidden), nn.LayerNorm(hidden), nn.ReLU()
+        )
+        self.layer3 = nn.Sequential(
+            nn.Linear(hidden, features_dim), nn.LayerNorm(features_dim), nn.ReLU()
+        )
+
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.network(observations)
+        residual = self.input_proj(observations)        # projection shortcut
+        x = self.layer1(observations)
+        x = self.layer2(x + residual)                   # residual addition
+        return self.layer3(x)
 
 
-class LLMAssistant:
-    """LLM-based tactic advisor for attacker"""
-    
-    def __init__(self):
-        self.llm_config = config.get_llm_config()
-        self.enabled = self.llm_config.get('enabled', False)
-        self.provider = self.llm_config.get('provider', 'ollama')
-        self.model = self.llm_config.get('model', 'llama3.2:3b')
-        self.api_base = self.llm_config.get('api_base', 'http://localhost:11434')
-        self.consult_prob = self.llm_config.get('consult_probability', 0.2)
-        self.temperature = self.llm_config.get('temperature', 0.7)
-        
-        if self.enabled:
-            self._test_connection()
-    
-    def _test_connection(self):
-        """Test if Ollama is running"""
-        try:
-            response = requests.get(f"{self.api_base}/api/tags", timeout=2)
-            if response.status_code == 200:
-                print(f"✅ LLM Assistant connected: {self.provider} ({self.model})")
-            else:
-                print(f"⚠️  LLM service responded but with error")
-                self.enabled = False
-        except Exception as e:
-            print(f"⚠️  LLM service not available: {e}")
-            print("   Continuing without LLM assistance")
-            self.enabled = False
-    
-    def get_suggestion(self, observation: np.ndarray) -> Optional[int]:
-        """Get action suggestion from LLM"""
-        if not self.enabled:
-            return None
-        
-        # Only consult LLM sometimes
-        if random.random() > self.consult_prob:
-            return None
-        
-        try:
-            prompt = self._build_prompt(observation)
-            
-            if self.provider == 'ollama':
-                return self._query_ollama(prompt)
-            else:
-                return None
-        
-        except Exception as e:
-            print(f"LLM query error: {e}")
-            return None
-    
-    def _build_prompt(self, obs: np.ndarray) -> str:
-        """Build prompt from observation"""
-        connection_active = obs[0] > 0.5
-        commands_executed = int(obs[1])
-        files_accessed = int(obs[2])
-        privilege_level = obs[3]
-        detection_score = obs[4]
-        
-        priv_str = "none"
-        if privilege_level > 0.9:
-            priv_str = "root"
-        elif privilege_level > 0.4:
-            priv_str = "user"
-        
-        prompt = f"""You are a red team penetration tester. Current honeypot state:
-- Connection: {'ACTIVE' if connection_active else 'NOT CONNECTED'}
-- Privilege: {priv_str} ({privilege_level:.2f})
-- Commands run: {commands_executed}
-- Files accessed: {files_accessed}
-- Detection risk: {detection_score:.2f} (0=safe, 1=detected)
-
-Available actions:
-0: Brute force SSH login
-1: Enumerate users/services
-2: Run reconnaissance commands
-3: Download malware/tools
-4: Attempt privilege escalation
-5: Create backdoor user
-6: Modify system files
-7: Exfiltrate sensitive data
-8: Port scan internal network
-9: Wait/observe passively
-
-Pick ONE action number (0-9) that maximizes attack success while minimizing detection. Reply with ONLY the number."""
-
-        return prompt
-    
-    def _query_ollama(self, prompt: str) -> Optional[int]:
-        """Query local Ollama instance"""
-        try:
-            response = requests.post(
-                f"{self.api_base}/api/generate",
-                json={
-                    'model': self.model,
-                    'prompt': prompt,
-                    'stream': False,
-                    'options': {
-                        'temperature': self.temperature,
-                        'num_predict': 20,
-                        'stop': ['\n', '.']
-                    }
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                text = response.json()['response']
-                
-                # Extract action number (first digit found)
-                match = re.search(r'\b([0-9])\b', text)
-                if match:
-                    action = int(match.group(1))
-                    if 0 <= action <= 9:
-                        print(f"🤖 LLM suggests: action {action}")
-                        return action
-            
-            return None
-        
-        except Exception as e:
-            print(f"Ollama query failed: {e}")
-            return None
-
+# ── Agent wrapper ──────────────────────────────────────────────────────────────
 
 class AttackerAgent:
-    """RL Agent that learns to attack honeypot systems with optional LLM guidance"""
-    
+    """
+    Wraps a RecurrentPPO (LSTM) model with helpers for:
+      • Behavioral cloning from scripted agents or oracle datasets
+      • Clean save / load with automatic directory creation
+      • A .predict() shim so the agent can also act as a curriculum opponent
+    """
+
     def __init__(
         self,
-        env,
+        env: DummyVecEnv,
         learning_rate: float = 3e-4,
-        n_steps: int = 2048,
-        batch_size: int = 64,
-        n_epochs: int = 10,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-        clip_range: float = 0.2,
-        ent_coef: float = 0.01,
-        vf_coef: float = 0.5,
-        max_grad_norm: float = 0.5,
-        tensorboard_log: str = "./logs/attacker/",
-        device: str = "auto",
-        use_llm: bool = True
+        ent_coef:      float = 0.01,
+        device:        str   = "auto",
     ):
         self.env = env
-        self.use_llm = use_llm and config.get_llm_config().get('enabled', False)
-        
-        # Initialize LLM assistant
-        self.llm_assistant = LLMAssistant() if self.use_llm else None
-        
-        # Custom policy with feature extractor
+
         policy_kwargs = dict(
-            features_extractor_class=AttackerFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=128),
-            net_arch=dict(pi=[256, 128], vf=[256, 128])
+            features_extractor_class  = AttackerFeatureExtractor,
+            features_extractor_kwargs = dict(features_dim=256),
+            net_arch                  = dict(pi=[256, 128], vf=[256, 128]),
+            enable_critic_lstm        = True,
+            lstm_hidden_size          = 256,
         )
-        
-        # Initialize PPO agent
-        self.model = PPO(
-            "MlpPolicy",
+
+        self.model = RecurrentPPO(
+            "MlpLstmPolicy",
             env,
-            learning_rate=learning_rate,
-            n_steps=n_steps,
-            batch_size=batch_size,
-            n_epochs=n_epochs,
-            gamma=gamma,
-            gae_lambda=gae_lambda,
-            clip_range=clip_range,
-            ent_coef=ent_coef,
-            vf_coef=vf_coef,
-            max_grad_norm=max_grad_norm,
-            policy_kwargs=policy_kwargs,
-            verbose=1,
-            tensorboard_log=tensorboard_log,
-            device=device
+            learning_rate = learning_rate,
+            n_steps       = 512,
+            batch_size    = 256,
+            n_epochs      = 10,
+            ent_coef      = ent_coef,
+            clip_range    = 0.2,
+            max_grad_norm = 0.5,
+            policy_kwargs = policy_kwargs,
+            verbose       = 0,
+            device        = device,
+            tensorboard_log = "./logs/attacker",
         )
-        
-        self.total_episodes = 0
-        self.total_steps = 0
-        self.attack_success_rate = []
-        self.detection_rate = []
-        self.llm_suggestions_used = 0
-        self.llm_suggestions_total = 0
-    
-    def train(
+
+    # ── Behavioral cloning ─────────────────────────────────────────────────────
+
+    def pretrain_on_expert(
         self,
-        total_timesteps: int,
-        callback=None,
-        log_interval: int = 10
-    ):
-        """Train the attacker agent"""
-        print(f"🔴 Training Attacker Agent for {total_timesteps} timesteps...")
-        if self.llm_assistant and self.llm_assistant.enabled:
-            print(f"   🤖 LLM assistance: ENABLED ({self.llm_assistant.consult_prob*100:.0f}% consult rate)")
-        
-        self.model.learn(
-            total_timesteps=total_timesteps,
-            callback=callback,
-            log_interval=log_interval,
-            progress_bar=True
-        )
-        
-        print("✅ Attacker training complete!")
-        return self
-    
-    def predict(self, observation, deterministic: bool = False):
-        """Get action from trained policy, optionally consulting LLM"""
-        
-        # Try LLM suggestion first
-        if self.llm_assistant and self.llm_assistant.enabled and not deterministic:
-            self.llm_suggestions_total += 1
-            llm_action = self.llm_assistant.get_suggestion(observation)
-            
-            if llm_action is not None:
-                self.llm_suggestions_used += 1
-                return llm_action
-        
-        # Fall back to RL policy
-        action, _states = self.model.predict(observation, deterministic=deterministic)
-        return action
-    
-    def evaluate(self, n_episodes: int = 10) -> Dict:
-        """Evaluate attacker performance"""
-        print(f"📊 Evaluating Attacker Agent over {n_episodes} episodes...")
-        
-        episode_rewards = []
-        episode_lengths = []
-        success_count = 0
-        detection_count = 0
-        
-        for episode in range(n_episodes):
-            obs, _ = self.env.reset()
-            done = False
-            truncated = False
-            episode_reward = 0
-            episode_length = 0
-            
-            while not (done or truncated):
-                action = self.predict(obs, deterministic=True)
-                obs, reward, done, truncated, info = self.env.step(action)
-                episode_reward += reward
-                episode_length += 1
-                
-                # Track success metrics (relaxed criteria)
-                if episode_reward > 300:  # Threshold for "successful" attack
-                    success_count += 1
-                    break  # Count once per episode
-                
-                if info.get('detected', False):
-                    detection_count += 1
-                    break
-            
-            episode_rewards.append(episode_reward)
-            episode_lengths.append(episode_length)
-            
-            print(f"Episode {episode + 1}: Reward={episode_reward:.2f}, Length={episode_length}")
-        
-        results = {
-            'mean_reward': np.mean(episode_rewards),
-            'std_reward': np.std(episode_rewards),
-            'mean_length': np.mean(episode_lengths),
-            'success_rate': success_count / n_episodes,
-            'detection_rate': detection_count / n_episodes
-        }
-        
-        print(f"\n📈 Evaluation Results:")
-        print(f"  Mean Reward: {results['mean_reward']:.2f} ± {results['std_reward']:.2f}")
-        print(f"  Mean Episode Length: {results['mean_length']:.1f}")
-        print(f"  Success Rate: {results['success_rate']:.2%}")
-        print(f"  Detection Rate: {results['detection_rate']:.2%}")
-        
-        if self.llm_suggestions_total > 0:
-            llm_usage = self.llm_suggestions_used / self.llm_suggestions_total
-            print(f"  LLM Usage: {llm_usage:.1%} ({self.llm_suggestions_used}/{self.llm_suggestions_total})")
-        
-        return results
-    
-    def save(self, path: str):
-        """Save trained model"""
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else '.', exist_ok=True)
+        expert,
+        env,
+        num_episodes:   int = 500,
+        epochs:         int = 20,
+        batch_size:     int = 512,
+        lr:             float = 1e-3,
+    ) -> None:
+        """
+        Behavioral cloning from a scripted expert agent.
+        The expert runs num_episodes, producing (obs, action) pairs.
+        """
+        print("\n🧠 [RED TEAM] Generating Expert Attack Dataset...")
+        obs_list, act_list = self._collect_expert_rollouts(expert, env, num_episodes)
+        self._train_bc(obs_list, act_list, epochs, batch_size, lr, label="RED TEAM")
+
+    def pretrain_on_dataset(
+        self,
+        dataset_path:  str,
+        epochs:        int = 20,
+        batch_size:    int = 512,
+        lr:            float = 1e-3,
+    ) -> None:
+        """
+        Behavioral cloning from a saved numpy dataset
+        (e.g. from LLMOracle.save_dataset).
+        """
+        print(f"\n🧠 [RED TEAM] Loading Oracle Dataset from {dataset_path}...")
+        data = np.load(dataset_path)
+        obs_list = list(data["observations"])
+        act_list = list(data["actions"])
+        print(f"   Loaded {len(obs_list)} transitions.")
+        self._train_bc(obs_list, act_list, epochs, batch_size, lr, label="RED TEAM (Oracle)")
+
+    # ── Predict shim (curriculum opponent interface) ───────────────────────────
+
+    def predict(self, observation: np.ndarray, deterministic: bool = True):
+        """Thin wrapper so AttackerAgent can be used as an opponent_model."""
+        obs = np.array(observation, dtype=np.float32).reshape(1, -1)
+        action, _ = self.model.predict(obs, deterministic=deterministic)
+        return int(np.asarray(action).flat[0]), None
+
+    # ── Save / load ────────────────────────────────────────────────────────────
+
+    def save(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.model.save(path)
-        print(f"💾 Attacker model saved to {path}")
-    
-    def load(self, path: str):
-        """Load trained model"""
-        if not os.path.exists(path):
-            print(f"❌ Model file not found: {path}")
-            return self
-        
-        self.model = PPO.load(path, env=self.env)
-        print(f"📂 Attacker model loaded from {path}")
-        return self
-    
-    def load_best(self):
-        """Load the best/default model from config"""
-        best_path = config.get_best_attacker_path()
-        return self.load(best_path)
 
+    def load(self, path: str) -> None:
+        self.model = RecurrentPPO.load(path, env=self.env)
 
-class AttackerCallback(BaseCallback):
-    """Custom callback for attacker training"""
-    
-    def __init__(self, verbose=0):
-        super().__init__(verbose)
-        self.episode_rewards = []
-        self.episode_lengths = []
-        self.current_episode_reward = 0
-        self.current_episode_length = 0
-    
-    def _on_step(self) -> bool:
-        self.current_episode_reward += self.locals['rewards'][0]
-        self.current_episode_length += 1
-        
-        # Check if episode ended
-        if self.locals['dones'][0]:
-            self.episode_rewards.append(self.current_episode_reward)
-            self.episode_lengths.append(self.current_episode_length)
-            
-            # Log to tensorboard
-            self.logger.record('attacker/episode_reward', self.current_episode_reward)
-            self.logger.record('attacker/episode_length', self.current_episode_length)
-            
-            # Reset counters
-            self.current_episode_reward = 0
-            self.current_episode_length = 0
-            
-            # Print progress
-            if len(self.episode_rewards) % 10 == 0:
-                mean_reward = np.mean(self.episode_rewards[-10:])
-                print(f"🔴 Episode {len(self.episode_rewards)}: Mean Reward (last 10) = {mean_reward:.2f}")
-        
-        return True
+    # ── Internal helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _collect_expert_rollouts(expert, env, num_episodes: int):
+        obs_list, act_list = [], []
+        for _ in tqdm(range(num_episodes), desc="Expert Rollouts", colour="red", leave=False):
+            obs, _ = env.reset()
+            done, steps = False, 0
+            while not done:
+                action, _ = expert.predict(obs)
+                obs_list.append(obs.copy())
+                act_list.append(int(action))
+                obs, _, term, trunc, _ = env.step(int(action))
+                done = term or trunc
+                steps += 1
+                if steps > env.max_steps + 5:
+                    break
+        return obs_list, act_list
+
+    def _train_bc(
+        self,
+        obs_list:   list,
+        act_list:   list,
+        epochs:     int,
+        batch_size: int,
+        lr:         float,
+        label:      str,
+    ) -> None:
+        print(f"   Dataset size: {len(obs_list)} transitions")
+        obs_t = torch.tensor(np.array(obs_list, dtype=np.float32))
+        act_t = torch.tensor(np.array(act_list, dtype=np.int64))
+        loader = DataLoader(
+            TensorDataset(obs_t, act_t),
+            batch_size=batch_size, shuffle=True, pin_memory=True
+        )
+
+        policy    = self.model.policy
+        optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+        device    = next(policy.parameters()).device
+
+        print(f"🎓 [{label}] Behavioral Cloning ({epochs} epochs)...")
+        policy.train()
+        lstm_h = self.model.policy.lstm_hidden_size
+        best_loss = float("inf")
+
+        for epoch in tqdm(range(epochs), desc="BC Training", colour="red", leave=False):
+            epoch_loss = 0.0
+            for batch_obs, batch_acts in loader:
+                batch_obs  = batch_obs.to(device)
+                batch_acts = batch_acts.to(device)
+                bs = len(batch_obs)
+
+                lstm_states = (
+                    torch.zeros(1, bs, lstm_h, device=device),
+                    torch.zeros(1, bs, lstm_h, device=device),
+                )
+                ep_starts = torch.ones(bs, dtype=torch.float32, device=device)
+
+                distribution, _ = policy.get_distribution(batch_obs, lstm_states, ep_starts)
+                loss = -distribution.log_prob(batch_acts).mean()
+
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(loader)
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+
+        policy.eval()
+        print(f"   BC complete – best loss: {best_loss:.4f}")

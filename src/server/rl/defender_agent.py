@@ -1,217 +1,206 @@
+"""
+defender_agent.py  –  CyberX Blue-Team RL Agent  (v2.0)
+=========================================================
+Mirrors attacker_agent.py with defender-specific defaults.
+The feature extractor has a slightly wider first layer because the
+defender's 8-dim observation has more semantically dense signals
+(multiple independent IOC counters) vs. the attacker's sparse 4-dim
+observation.
+"""
+
+import os
 import numpy as np
 import torch
 import torch.nn as nn
-from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback
+from torch.utils.data import DataLoader, TensorDataset
+from sb3_contrib import RecurrentPPO
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 import gymnasium as gym
-from typing import Dict
-import os
+from tqdm import tqdm
+
 
 class DefenderFeatureExtractor(BaseFeaturesExtractor):
     """
-    Custom feature extractor for defender observations
-    Learns to identify attack patterns
+    Three-layer MLP with residual connection.
+    Wider first hidden layer (512) because the defender's observation
+    has 8 meaningful dimensions that all contribute simultaneously,
+    unlike the attacker's sparser signal.
     """
-    
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 128):
+
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
         super().__init__(observation_space, features_dim)
-        
         n_input = observation_space.shape[0]
-        
-        self.network = nn.Sequential(
-            nn.Linear(n_input, 128),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, features_dim),
-            nn.ReLU()
+        hidden  = 512
+
+        self.input_proj = nn.Linear(n_input, hidden)
+        self.layer1 = nn.Sequential(
+            nn.Linear(n_input, hidden), nn.LayerNorm(hidden), nn.ReLU()
         )
-    
+        self.layer2 = nn.Sequential(
+            nn.Linear(hidden, hidden), nn.LayerNorm(hidden), nn.ReLU()
+        )
+        # Bottleneck down to features_dim with residual
+        self.layer3 = nn.Sequential(
+            nn.Linear(hidden, features_dim), nn.LayerNorm(features_dim), nn.ReLU()
+        )
+        self.res_proj = nn.Linear(hidden, features_dim)
+
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.network(observations)
+        residual = self.input_proj(observations)
+        x = self.layer1(observations)
+        x = self.layer2(x + residual)
+        skip = self.res_proj(x)
+        return self.layer3(x) + skip
 
 
 class DefenderAgent:
     """
-    RL Agent that learns to defend honeypot systems
-    Uses PPO algorithm to detect and mitigate attacks
+    Wraps RecurrentPPO for the defending role with the same interface
+    as AttackerAgent (pretrain_on_expert, pretrain_on_dataset, predict,
+    save, load).
     """
-    
+
     def __init__(
         self,
-        env,
+        env: DummyVecEnv,
         learning_rate: float = 3e-4,
-        n_steps: int = 2048,
-        batch_size: int = 64,
-        n_epochs: int = 10,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-        clip_range: float = 0.2,
-        ent_coef: float = 0.01,
-        vf_coef: float = 0.5,
-        max_grad_norm: float = 0.5,
-        tensorboard_log: str = "./logs/defender/",
-        device: str = "auto"
+        ent_coef:      float = 0.05,   # higher than attacker: defender has more valid actions
+        device:        str   = "auto",
     ):
         self.env = env
-        
-        # Custom policy
+
         policy_kwargs = dict(
-            features_extractor_class=DefenderFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=128),
-            net_arch=[dict(pi=[256, 128], vf=[256, 128])]
+            features_extractor_class  = DefenderFeatureExtractor,
+            features_extractor_kwargs = dict(features_dim=256),
+            net_arch                  = dict(pi=[256, 128], vf=[256, 128]),
+            enable_critic_lstm        = True,
+            lstm_hidden_size          = 256,
         )
-        
-        # Initialize PPO agent
-        self.model = PPO(
-            "MlpPolicy",
+
+        self.model = RecurrentPPO(
+            "MlpLstmPolicy",
             env,
-            learning_rate=learning_rate,
-            n_steps=n_steps,
-            batch_size=batch_size,
-            n_epochs=n_epochs,
-            gamma=gamma,
-            gae_lambda=gae_lambda,
-            clip_range=clip_range,
-            ent_coef=ent_coef,
-            vf_coef=vf_coef,
-            max_grad_norm=max_grad_norm,
-            policy_kwargs=policy_kwargs,
-            verbose=1,
-            tensorboard_log=tensorboard_log,
-            device=device
+            learning_rate = learning_rate,
+            n_steps       = 512,
+            batch_size    = 256,
+            n_epochs      = 10,
+            ent_coef      = ent_coef,
+            clip_range    = 0.2,
+            max_grad_norm = 0.5,
+            policy_kwargs = policy_kwargs,
+            verbose       = 0,
+            device        = device,
+            tensorboard_log = "./logs/defender",
         )
-        
-        self.total_episodes = 0
-        self.attacks_detected = 0
-        self.false_positives = 0
-    
-    def train(
+
+    def pretrain_on_expert(
         self,
-        total_timesteps: int,
-        callback=None,
-        log_interval: int = 10
-    ):
-        """Train the defender agent"""
-        print(f"🔵 Training Defender Agent for {total_timesteps} timesteps...")
-        
-        self.model.learn(
-            total_timesteps=total_timesteps,
-            callback=callback,
-            log_interval=log_interval,
-            progress_bar=True
-        )
-        
-        print("✅ Defender training complete!")
-        return self
-    
-    def predict(self, observation, deterministic: bool = False):
-        """Get action from trained policy"""
-        action, _states = self.model.predict(observation, deterministic=deterministic)
-        return action
-    
-    def evaluate(self, n_episodes: int = 10) -> Dict:
-        """Evaluate defender performance"""
-        print(f"📊 Evaluating Defender Agent over {n_episodes} episodes...")
-        
-        episode_rewards = []
-        episode_lengths = []
-        attacks_detected = 0
-        false_positives = 0
-        attacks_mitigated = 0
-        
-        for episode in range(n_episodes):
-            obs, _ = self.env.reset()
-            done = False
-            truncated = False
-            episode_reward = 0
-            episode_length = 0
-            
-            while not (done or truncated):
-                action = self.predict(obs, deterministic=True)
-                obs, reward, done, truncated, info = self.env.step(action)
-                episode_reward += reward
-                episode_length += 1
-                
-                # Track defense metrics
-                attacks_detected += info.get('attacks_detected', 0)
-                false_positives += info.get('false_positives', 0)
-                attacks_mitigated += info.get('attacks_mitigated', 0)
-            
-            episode_rewards.append(episode_reward)
-            episode_lengths.append(episode_length)
-            
-            print(f"Episode {episode + 1}: Reward={episode_reward:.2f}, Length={episode_length}")
-        
-        total_detections = attacks_detected + false_positives
-        precision = attacks_detected / total_detections if total_detections > 0 else 0
-        
-        results = {
-            'mean_reward': np.mean(episode_rewards),
-            'std_reward': np.std(episode_rewards),
-            'mean_length': np.mean(episode_lengths),
-            'attacks_detected': attacks_detected,
-            'false_positives': false_positives,
-            'precision': precision,
-            'attacks_mitigated': attacks_mitigated
-        }
-        
-        print(f"\n📈 Evaluation Results:")
-        print(f"  Mean Reward: {results['mean_reward']:.2f} ± {results['std_reward']:.2f}")
-        print(f"  Mean Episode Length: {results['mean_length']:.1f}")
-        print(f"  Attacks Detected: {results['attacks_detected']}")
-        print(f"  False Positives: {results['false_positives']}")
-        print(f"  Precision: {results['precision']:.2%}")
-        print(f"  Attacks Mitigated: {results['attacks_mitigated']}")
-        
-        return results
-    
-    def save(self, path: str):
-        """Save trained model"""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        expert,
+        env,
+        num_episodes:   int   = 500,
+        epochs:         int   = 20,
+        batch_size:     int   = 512,
+        lr:             float = 1e-3,
+    ) -> None:
+        print("\n🧠 [BLUE TEAM] Generating Expert Defense Dataset...")
+        obs_list, act_list = self._collect_expert_rollouts(expert, env, num_episodes)
+        self._train_bc(obs_list, act_list, epochs, batch_size, lr, label="BLUE TEAM")
+
+    def pretrain_on_dataset(
+        self,
+        dataset_path:  str,
+        epochs:        int   = 20,
+        batch_size:    int   = 512,
+        lr:            float = 1e-3,
+    ) -> None:
+        print(f"\n🧠 [BLUE TEAM] Loading Oracle Dataset from {dataset_path}...")
+        data = np.load(dataset_path)
+        obs_list = list(data["observations"])
+        act_list = list(data["actions"])
+        print(f"   Loaded {len(obs_list)} transitions.")
+        self._train_bc(obs_list, act_list, epochs, batch_size, lr, label="BLUE TEAM (Oracle)")
+
+    def predict(self, observation: np.ndarray, deterministic: bool = True):
+        obs = np.array(observation, dtype=np.float32).reshape(1, -1)
+        action, _ = self.model.predict(obs, deterministic=deterministic)
+        return int(np.asarray(action).flat[0]), None
+
+    def save(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.model.save(path)
-        print(f"💾 Defender model saved to {path}")
-    
-    def load(self, path: str):
-        """Load trained model"""
-        self.model = PPO.load(path, env=self.env)
-        print(f"📂 Defender model loaded from {path}")
-        return self
 
+    def load(self, path: str) -> None:
+        self.model = RecurrentPPO.load(path, env=self.env)
 
-class DefenderCallback(BaseCallback):
-    """Custom callback for defender training"""
-    
-    def __init__(self, verbose=0):
-        super().__init__(verbose)
-        self.episode_rewards = []
-        self.episode_lengths = []
-        self.current_episode_reward = 0
-        self.current_episode_length = 0
-    
-    def _on_step(self) -> bool:
-        self.current_episode_reward += self.locals['rewards'][0]
-        self.current_episode_length += 1
-        
-        # Check if episode ended
-        if self.locals['dones'][0]:
-            self.episode_rewards.append(self.current_episode_reward)
-            self.episode_lengths.append(self.current_episode_length)
-            
-            # Log to tensorboard
-            self.logger.record('defender/episode_reward', self.current_episode_reward)
-            self.logger.record('defender/episode_length', self.current_episode_length)
-            
-            # Reset counters
-            self.current_episode_reward = 0
-            self.current_episode_length = 0
-            
-            # Print progress
-            if len(self.episode_rewards) % 10 == 0:
-                mean_reward = np.mean(self.episode_rewards[-10:])
-                print(f"🔵 Episode {len(self.episode_rewards)}: Mean Reward (last 10) = {mean_reward:.2f}")
-        
-        return True
+    @staticmethod
+    def _collect_expert_rollouts(expert, env, num_episodes: int):
+        obs_list, act_list = [], []
+        for _ in tqdm(range(num_episodes), desc="Expert Rollouts", colour="blue", leave=False):
+            obs, _ = env.reset()
+            done, steps = False, 0
+            while not done:
+                action, _ = expert.predict(obs)
+                obs_list.append(obs.copy())
+                act_list.append(int(action))
+                obs, _, term, trunc, _ = env.step(int(action))
+                done = term or trunc
+                steps += 1
+                if steps > env.max_steps + 5:
+                    break
+        return obs_list, act_list
+
+    def _train_bc(
+        self,
+        obs_list:   list,
+        act_list:   list,
+        epochs:     int,
+        batch_size: int,
+        lr:         float,
+        label:      str,
+    ) -> None:
+        print(f"   Dataset size: {len(obs_list)} transitions")
+        obs_t = torch.tensor(np.array(obs_list, dtype=np.float32))
+        act_t = torch.tensor(np.array(act_list, dtype=np.int64))
+        loader = DataLoader(
+            TensorDataset(obs_t, act_t),
+            batch_size=batch_size, shuffle=True, pin_memory=True
+        )
+
+        policy    = self.model.policy
+        optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+        device    = next(policy.parameters()).device
+
+        print(f"🎓 [{label}] Behavioral Cloning ({epochs} epochs)...")
+        policy.train()
+        lstm_h   = self.model.policy.lstm_hidden_size
+        best_loss = float("inf")
+
+        for epoch in tqdm(range(epochs), desc="BC Training", colour="blue", leave=False):
+            epoch_loss = 0.0
+            for batch_obs, batch_acts in loader:
+                batch_obs  = batch_obs.to(device)
+                batch_acts = batch_acts.to(device)
+                bs = len(batch_obs)
+
+                lstm_states = (
+                    torch.zeros(1, bs, lstm_h, device=device),
+                    torch.zeros(1, bs, lstm_h, device=device),
+                )
+                ep_starts = torch.ones(bs, dtype=torch.float32, device=device)
+
+                distribution, _ = policy.get_distribution(batch_obs, lstm_states, ep_starts)
+                loss = -distribution.log_prob(batch_acts).mean()
+
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(loader)
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+
+        policy.eval()
+        print(f"   BC complete – best loss: {best_loss:.4f}")
