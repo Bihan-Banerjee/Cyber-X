@@ -17,6 +17,8 @@ Provides two things:
     of the win-rate trend so far.
 """
 
+from __future__ import annotations  # makes all type hints lazy — fixes forward references
+
 import time
 import sys
 import os

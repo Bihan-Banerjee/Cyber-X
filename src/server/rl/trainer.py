@@ -27,7 +27,7 @@ import time
 
 import numpy as np
 import torch
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from sb3_contrib import RecurrentPPO
 
 from shared_honeypot_env import SharedHoneypotEnv
@@ -40,6 +40,7 @@ from attacker_agent import AttackerAgent
 from defender_agent import DefenderAgent
 from evaluator import MARLEvaluator
 from llm_oracle import LLMOracle
+from vec_env_factory import make_parallel_envs
 from progress import (
     CyberXProgressCallback,
     EpsilonGreedyWarmupCallback,
@@ -80,12 +81,15 @@ class MARLTrainer:
         device:     str   = "auto",
         llm_config: Optional[Dict] = None,
     ):
-        self.save_dir   = save_dir
-        self.lr         = lr
-        self.ent_coef   = ent_coef
-        self.n_envs     = n_envs
-        self.llm_config = llm_config or {"enabled": False}
-        self.device     = self._resolve_device(device)
+        self.save_dir      = save_dir
+        self.lr            = lr
+        self.ent_coef      = ent_coef
+        self.n_envs        = n_envs
+        self.llm_config    = llm_config or {"enabled": False}
+        self.device        = self._resolve_device(device)
+        # Use SubprocVecEnv for real parallelism.  Can be disabled for
+        # debugging or if subprocess creation fails on this platform.
+        self.use_subprocess = True
 
         for d in [save_dir, f"{save_dir}/ghosts", f"{save_dir}/checkpoints",
                   "./data/oracle_datasets", "./logs"]:
@@ -319,9 +323,15 @@ class MARLTrainer:
 
             if self._curr_level < 2:
                 att_opp, def_opp = ScriptedDefender(), ScriptedAttacker()
+                att_opp_path = def_opp_path = None
             else:
                 att_opp = self._sample_opponent(self._def_ghosts, self.defender)
                 def_opp = self._sample_opponent(self._att_ghosts, self.attacker)
+                # Save opponents to temp paths so subprocesses can load them
+                att_opp_path = os.path.join(self.save_dir, "_tmp_def_opp.zip")
+                def_opp_path = os.path.join(self.save_dir, "_tmp_att_opp.zip")
+                att_opp.save(att_opp_path)
+                def_opp.save(def_opp_path)
 
             # Curriculum-aware timesteps and eval episodes.
             # At level 0 agents are training against simple scripted opponents —
@@ -357,7 +367,7 @@ class MARLTrainer:
                 warmup_iters      = 6,
                 current_iteration = iteration,
             )
-            att_envs = self._make_vec_env("attacker", att_opp)
+            att_envs = self._make_vec_env("attacker", att_opp, att_opp_path)
             self.attacker.model.set_env(att_envs)
             self.attacker.model.learn(
                 total_timesteps     = curr_timesteps,
@@ -385,7 +395,7 @@ class MARLTrainer:
                 warmup_iters      = 6,
                 current_iteration = iteration,
             )
-            def_envs = self._make_vec_env("defender", def_opp)
+            def_envs = self._make_vec_env("defender", def_opp, def_opp_path)
             self.defender.model.set_env(def_envs)
             self.defender.model.learn(
                 total_timesteps     = curr_timesteps,
@@ -547,20 +557,39 @@ class MARLTrainer:
             self._rebuild_envs_for_curriculum()
 
     def _rebuild_envs_for_curriculum(self) -> None:
-        att_opp = ScriptedDefender() if self._curr_level < 2 else self.defender
-        def_opp = ScriptedAttacker() if self._curr_level < 2 else self.attacker
-        self._att_envs = self._make_vec_env("attacker", att_opp)
-        self._def_envs = self._make_vec_env("defender", def_opp)
+        if self._curr_level < 2:
+            self._att_envs = self._make_vec_env("attacker", ScriptedDefender())
+            self._def_envs = self._make_vec_env("defender", ScriptedAttacker())
+        else:
+            # Save current agents so subprocesses can load them
+            att_p = os.path.join(self.save_dir, "_tmp_def_opp.zip")
+            def_p = os.path.join(self.save_dir, "_tmp_att_opp.zip")
+            self.defender.save(att_p)
+            self.attacker.save(def_p)
+            self._att_envs = self._make_vec_env("attacker", opponent_path=att_p)
+            self._def_envs = self._make_vec_env("defender", opponent_path=def_p)
 
     # ── Utilities ──────────────────────────────────────────────────────────────
 
-    def _make_vec_env(self, mode: str, opponent=None) -> DummyVecEnv:
-        cl = self._curr_level
-        return DummyVecEnv([
-            lambda m=mode, opp=opponent, c=cl:
-            SharedHoneypotEnv(mode=m, opponent_model=opp, curriculum_level=c)
-            for _ in range(self.n_envs)
-        ])
+    def _make_vec_env(self, mode: str, opponent=None, opponent_path: str = None):
+        """
+        Create a vectorised env.
+
+        At curriculum levels 0 and 1, the opponent is a scripted agent
+        (picklable) → SubprocVecEnv with 8 true parallel workers.
+
+        At level 2, the opponent is an RL agent.  We pass opponent_path
+        so each subprocess can load weights independently from disk,
+        avoiding CUDA tensor serialization across process boundaries.
+        """
+        return make_parallel_envs(
+            mode             = mode,
+            n_envs           = self.n_envs,
+            curriculum_level = self._curr_level,
+            opponent         = opponent,
+            opponent_path    = opponent_path,
+            use_subprocess   = self.use_subprocess,
+        )
 
     def _checkpoint(self, iteration: int) -> None:
         d = f"{self.save_dir}/checkpoints"
