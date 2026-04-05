@@ -23,6 +23,7 @@ import random
 import logging
 from typing import Optional, Dict, List
 from datetime import datetime
+import time
 
 import numpy as np
 import torch
@@ -39,6 +40,13 @@ from attacker_agent import AttackerAgent
 from defender_agent import DefenderAgent
 from evaluator import MARLEvaluator
 from llm_oracle import LLMOracle
+from progress import (
+    CyberXProgressCallback,
+    EpsilonGreedyWarmupCallback,
+    print_iteration_header,
+    print_iteration_summary,
+    print_final_summary,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,6 +118,8 @@ class MARLTrainer:
         }
 
         self._pause_requested = False
+        self._run_start:  float = time.time()   # set properly in train()
+        self._iter_times: List[float] = []       # per-iteration wall times
         signal.signal(signal.SIGINT, self._handle_sigint)
 
         print(BANNER)
@@ -284,6 +294,7 @@ class MARLTrainer:
             if not self.load_state():
                 logger.info("No saved state found at %s — starting fresh.", self.save_dir)
 
+        self._run_start = time.time()
         fresh_start = (self._start_iteration == 1)
 
         if run_bc_phase and fresh_start:
@@ -293,11 +304,15 @@ class MARLTrainer:
             self._phase_llm_oracle_cloning()
 
         for iteration in range(self._start_iteration, n_iterations + 1):
-            print(f"\n{'═'*62}")
-            print(f"  ITERATION  {iteration}/{n_iterations}   "
-                  f"Curriculum Stage {self._curr_level}   "
-                  f"{datetime.now().strftime('%H:%M:%S')}")
-            print(f"{'═'*62}")
+            iter_t0 = time.time()
+
+            print_iteration_header(
+                iteration        = iteration,
+                n_iterations     = n_iterations,
+                curriculum_level = self._curr_level,
+                run_start        = self._run_start,
+                iter_times       = self._iter_times,
+            )
 
             self._save_ghost(iteration)
             self._rebuild_envs_for_curriculum()
@@ -308,55 +323,122 @@ class MARLTrainer:
                 att_opp = self._sample_opponent(self._def_ghosts, self.defender)
                 def_opp = self._sample_opponent(self._att_ghosts, self.attacker)
 
-            print("\n  [RED TEAM]  Learning...")
+            # Curriculum-aware timesteps and eval episodes.
+            # At level 0 agents are training against simple scripted opponents —
+            # 30k steps is enough signal without wasting hours.  Full 100k only
+            # kicks in at level 2 (self-play) where the policy landscape is
+            # genuinely complex.  Same logic for eval: 20 eps at level 0 is
+            # statistically sufficient; save the 50-ep eval for paper results.
+            curr_timesteps = {0: max(30_000,  timesteps_per_iter // 3),
+                              1: max(60_000,  timesteps_per_iter // 2),
+                              2: timesteps_per_iter}.get(self._curr_level, timesteps_per_iter)
+            curr_eval_eps  = {0: max(20, eval_episodes // 2),
+                              1: max(30, eval_episodes * 2 // 3),
+                              2: eval_episodes}.get(self._curr_level, eval_episodes)
+
+            print(f"  Timesteps this iter: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}")
+
+            # ── Attacker training with live progress bar ───────────────────
+            att_cb = CyberXProgressCallback(
+                total_timesteps = curr_timesteps,
+                role            = "attacker",
+                iteration       = iteration,
+                n_iterations    = n_iterations,
+                iteration_start = iter_t0,
+                run_start       = self._run_start,
+                device          = self.device,
+            )
+            # Epsilon-greedy warmup: forces exploration for first 6 iters.
+            # Decays from 30% random actions → 0%.  Prevents LSTM collapse.
+            att_eps_cb = EpsilonGreedyWarmupCallback(
+                action_space_n    = 10,
+                start_eps         = 0.30,
+                end_eps           = 0.0,
+                warmup_iters      = 6,
+                current_iteration = iteration,
+            )
             att_envs = self._make_vec_env("attacker", att_opp)
             self.attacker.model.set_env(att_envs)
             self.attacker.model.learn(
-                total_timesteps=timesteps_per_iter,
-                reset_num_timesteps=False,
-                tb_log_name="attacker",
+                total_timesteps     = curr_timesteps,
+                reset_num_timesteps = False,
+                tb_log_name         = "attacker",
+                callback            = [att_cb, att_eps_cb],
             )
+            if att_eps_cb.epsilon > 0:
+                print(f"  Epsilon warmup: injected {att_eps_cb.inject_rate:.0%} random attacker actions")
 
-            print("  [BLUE TEAM] Learning...")
+            # ── Defender training with live progress bar ───────────────────
+            def_cb = CyberXProgressCallback(
+                total_timesteps = curr_timesteps,
+                role            = "defender",
+                iteration       = iteration,
+                n_iterations    = n_iterations,
+                iteration_start = iter_t0,
+                run_start       = self._run_start,
+                device          = self.device,
+            )
+            def_eps_cb = EpsilonGreedyWarmupCallback(
+                action_space_n    = 10,
+                start_eps         = 0.20,
+                end_eps           = 0.0,
+                warmup_iters      = 6,
+                current_iteration = iteration,
+            )
             def_envs = self._make_vec_env("defender", def_opp)
             self.defender.model.set_env(def_envs)
             self.defender.model.learn(
-                total_timesteps=timesteps_per_iter,
-                reset_num_timesteps=False,
-                tb_log_name="defender",
+                total_timesteps     = curr_timesteps,
+                reset_num_timesteps = False,
+                tb_log_name         = "defender",
+                callback            = [def_cb, def_eps_cb],
             )
 
-            # Skip checkpoint in smoke runs (saves ~60s per iteration)
             if n_iterations > 2:
                 self._checkpoint(iteration)
 
             metrics = self.evaluator.evaluate_iteration(
-                iteration=iteration,
-                attacker=self.attacker,
-                defender=self.defender,
-                baselines_att={
+                iteration        = iteration,
+                attacker         = self.attacker,
+                defender         = self.defender,
+                baselines_att    = {
                     "random":   RandomAttacker(),
                     "scripted": ScriptedAttacker(),
                     "expert":   ExpertAttacker(),
                 },
-                baselines_def={
+                baselines_def    = {
                     "random":   RandomDefender(),
                     "scripted": ScriptedDefender(),
                     "expert":   ExpertDefender(),
                 },
-                n_episodes=eval_episodes,
-                curriculum_level=self._curr_level,
+                n_episodes       = curr_eval_eps,
+                curriculum_level = self._curr_level,
+                silent           = True,   # rich panel printed by print_iteration_summary
             )
+
+            iter_elapsed = time.time() - iter_t0
+            self._iter_times.append(iter_elapsed)
 
             self._update_history(iteration, metrics)
             self._check_curriculum_promotion(metrics)
             self._stage_iter_count += 1
 
+            # Rich post-eval summary (replaces the old plain print)
+            print_iteration_summary(
+                iteration     = iteration,
+                n_iterations  = n_iterations,
+                metrics       = metrics,
+                history       = self.history,
+                iter_elapsed  = iter_elapsed,
+                run_start     = self._run_start,
+                att_callback  = att_cb,
+                def_callback  = def_cb,
+            )
+
             if iteration % 5 == 0:
                 self.evaluator.plot_training_curves()
                 self.evaluator.plot_action_heatmap(iteration)
 
-            # ── PAUSE/RESUME: save state after every completed iteration ───
             self.save_state(iteration)
 
             if self._pause_requested:
@@ -504,9 +586,12 @@ class MARLTrainer:
         self.attacker.save(f"{self.save_dir}/attacker_best.zip")
         self.defender.save(f"{self.save_dir}/defender_best.zip")
         self.evaluator.plot_training_curves()
-        print("\n" + "═"*62)
-        print("  TRAINING COMPLETE")
-        for name, elo in self.evaluator.elo.leaderboard()[:10]:
-            print(f"    {elo:6.0f}  {name}")
-        print(self.evaluator.latest_summary_table())
-        print("═"*62)
+        print_final_summary(
+            history     = self.history,
+            run_start   = self._run_start,
+            leaderboard = self.evaluator.elo.leaderboard(),
+        )
+        print(f"  Best models : {self.save_dir}/attacker_best.zip")
+        print(f"              : {self.save_dir}/defender_best.zip")
+        print(f"  Results     : {self.save_dir}/results/")
+        print(f"  TensorBoard : tensorboard --logdir ./logs\n")

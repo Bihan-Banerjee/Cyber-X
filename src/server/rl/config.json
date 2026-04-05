@@ -23,7 +23,7 @@
     }
   },
   "llm": {
-    "enabled": true,
+    "enabled": false,
     "_comment_enabled": "Set to true once you have an API key configured",
 
     "provider": "ollama",

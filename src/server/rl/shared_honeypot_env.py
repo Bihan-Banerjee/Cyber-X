@@ -390,6 +390,13 @@ class SharedHoneypotEnv(gym.Env):
         # Small passive reward per decoy per step (encouraging setup)
         r += ts["decoys_deployed"] * 0.1
 
+        # Block frequency cap: after 5 blocks in one episode the defender is
+        # clearly spamming. Each block beyond 5 costs -10.0.
+        # This directly fixes the FP=56/episode behaviour observed at iter 4
+        # where the defender learned to block every step unconditionally.
+        if ts["blocks_issued"] > 5:
+            r -= 10.0
+
         return r
 
     def _exec_attacker_action(self, action: int) -> float:
@@ -505,11 +512,15 @@ class SharedHoneypotEnv(gym.Env):
             r -= 0.2
             ts["att_last_success"] = 1   # not failing = success by definition
 
-        # Survival reward: being inside the network has intrinsic value.
-        # This encourages the attacker to try to stay at USER/ROOT rather than
-        # giving up after a failed priv-esc attempt, and makes the exploration
-        # signal strong enough to find the root-access trajectory.
-        if ts["kill_chain_level"] == STATE_USER_ACCESS:
+        # Survival / time-pressure rewards.
+        # EXTERNAL penalty: the attacker MUST try to advance — waiting is losing.
+        # This directly fixes the "wait forever at EXTERNAL" entropy collapse.
+        # The penalty scales with how long they've been stuck: mild early,
+        # punishing after step 20 so the agent is forced to commit.
+        if ts["kill_chain_level"] == STATE_EXTERNAL:
+            steps_stuck = max(0, self.current_step - 5)  # grace period of 5 steps
+            r -= 0.3 + min(0.5, steps_stuck * 0.02)      # ramps from -0.3 to -0.8
+        elif ts["kill_chain_level"] == STATE_USER_ACCESS:
             r += 0.5   # reward for maintaining foothold
         elif ts["kill_chain_level"] == STATE_ROOT_ACCESS:
             r += 1.0   # reward for maintaining full compromise

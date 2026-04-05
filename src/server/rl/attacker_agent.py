@@ -73,7 +73,7 @@ class AttackerAgent:
         self,
         env: DummyVecEnv,
         learning_rate: float = 3e-4,
-        ent_coef:      float = 0.01,
+        ent_coef:      float = 0.05,   # raised from 0.01 — prevents "wait forever" entropy collapse
         device:        str   = "auto",
     ):
         self.env = env
@@ -198,7 +198,11 @@ class AttackerAgent:
 
         print(f"🎓 [{label}] Behavioral Cloning ({epochs} epochs)...")
         policy.train()
-        lstm_h = self.model.policy.lstm_hidden_size
+        # sb3-contrib attribute name changed across versions — probe both
+        lstm_h = (getattr(self.model.policy, "lstm_hidden_size", None)
+                  or getattr(getattr(self.model.policy, "lstm_actor", None),
+                             "hidden_size", None)
+                  or 256)
         best_loss = float("inf")
 
         for epoch in tqdm(range(epochs), desc="BC Training", colour="red", leave=False):

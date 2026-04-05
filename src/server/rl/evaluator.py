@@ -193,6 +193,7 @@ class MARLEvaluator:
         baselines_def: Dict[str, Any],
         n_episodes: int = 50,
         curriculum_level: int = 2,
+        silent: bool = False,
     ) -> Dict[str, Any]:
         """
         Run a full evaluation suite for one training iteration.
@@ -250,7 +251,8 @@ class MARLEvaluator:
         self._save_json(self._metrics_path, self.all_metrics)
         self._save_json(self._elo_path, self.elo.to_dict())
 
-        self._print_summary(iteration, metrics)
+        if not silent:
+            self._print_summary(iteration, metrics)
         return metrics
 
     # ── Match runner ───────────────────────────────────────────────────────────

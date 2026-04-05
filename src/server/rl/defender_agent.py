@@ -173,7 +173,10 @@ class DefenderAgent:
 
         print(f"🎓 [{label}] Behavioral Cloning ({epochs} epochs)...")
         policy.train()
-        lstm_h   = self.model.policy.lstm_hidden_size
+        lstm_h = (getattr(self.model.policy, "lstm_hidden_size", None)
+                  or getattr(getattr(self.model.policy, "lstm_actor", None),
+                             "hidden_size", None)
+                  or 256)
         best_loss = float("inf")
 
         for epoch in tqdm(range(epochs), desc="BC Training", colour="blue", leave=False):
