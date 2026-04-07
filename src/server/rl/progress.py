@@ -99,23 +99,22 @@ class EpsilonGreedyWarmupCallback(BaseCallback):
     def _on_step(self) -> bool:
         if self.epsilon <= 0:
             return True
-        # SB3 stores the actions that *will* be taken in locals["actions"]
-        # We can override them before the env.step() happens.
         if "actions" in self.locals and np.random.random() < self.epsilon:
-            n = len(self.locals["actions"])
             self.locals["actions"][:] = np.random.randint(
                 0, self.action_space_n, size=self.locals["actions"].shape
             )
-            self._injected += n
+            self._injected += 1   # count decisions, not individual env actions
         self._total += 1
         return True
 
     @property
     def inject_rate(self) -> float:
+        """Fraction of steps where a random action was injected (0–1)."""
         return self._injected / max(self._total, 1)
 
 
 
+class CyberXProgressCallback(BaseCallback):
     """
     Drop into model.learn(..., callback=cb) to get a live progress bar.
 

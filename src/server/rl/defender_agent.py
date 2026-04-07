@@ -131,7 +131,7 @@ class DefenderAgent:
         self.model.save(path)
 
     def load(self, path: str) -> None:
-        self.model = RecurrentPPO.load(path, env=self.env)
+        self.model = RecurrentPPO.load(path, env=self.env, device=self.model.device)
 
     @staticmethod
     def _collect_expert_rollouts(expert, env, num_episodes: int):

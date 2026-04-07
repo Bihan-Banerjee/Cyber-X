@@ -87,9 +87,10 @@ class MARLTrainer:
         self.n_envs        = n_envs
         self.llm_config    = llm_config or {"enabled": False}
         self.device        = self._resolve_device(device)
-        # Use SubprocVecEnv for real parallelism.  Can be disabled for
-        # debugging or if subprocess creation fails on this platform.
-        self.use_subprocess = True
+        # SubprocVecEnv deadlocks on Windows during __init__ due to the spawn
+        # start method re-importing modules before if __name__=="__main__" guard.
+        # Disabled by default. Enable via --parallel flag once the run is stable.
+        self.use_subprocess = False
 
         for d in [save_dir, f"{save_dir}/ghosts", f"{save_dir}/checkpoints",
                   "./data/oracle_datasets", "./logs"]:
@@ -105,11 +106,18 @@ class MARLTrainer:
         self._att_ghosts: List[AttackerAgent] = []
         self._def_ghosts: List[DefenderAgent] = []
 
+        t0 = time.time()
         self._att_envs = self._make_vec_env("attacker", ScriptedDefender())
         self._def_envs = self._make_vec_env("defender", ScriptedAttacker())
+        print(f"  Envs ready ({time.time()-t0:.1f}s)", flush=True)
 
+        t0 = time.time()
         self.attacker = AttackerAgent(self._att_envs, lr, ent_coef, self.device)
+        print(f"  Attacker ready ({time.time()-t0:.1f}s)", flush=True)
+
+        t0 = time.time()
         self.defender = DefenderAgent(self._def_envs, lr, ent_coef, self.device)
+        print(f"  Defender ready ({time.time()-t0:.1f}s)", flush=True)
 
         self.evaluator  = MARLEvaluator(save_dir=f"{save_dir}/results")
         self.att_oracle = LLMOracle("attacker", self.llm_config)
@@ -247,14 +255,19 @@ class MARLTrainer:
             (s.get("defender_path"), "Defender", self.defender),
         ]:
             if path and os.path.exists(path):
+                t0 = time.time()
                 agent.load(path)
-                logger.info("Loaded %s weights from %s", label, path)
+                logger.info("Loaded %s from %s  (%.1fs)", label, path, time.time()-t0)
             else:
-                logger.warning("%s weights not found at %s — starting fresh", label, path)
+                logger.warning("%s not found at %s — starting fresh", label, path)
 
-        # Must rebuild envs before ghost pools (pools need env for model loading)
-        self._rebuild_envs_for_curriculum()
-        self._rebuild_ghost_pools()
+        # Don't rebuild full envs here — the training loop calls
+        # _rebuild_envs_for_curriculum() at the start of each iteration anyway.
+        # Rebuilding here just wastes 16 env instantiations on startup.
+        # Ghost pools are only used at level 2; skip if at level 0/1.
+        if self._curr_level >= 2:
+            self._rebuild_envs_for_curriculum()
+            self._rebuild_ghost_pools()
         return True
 
     def _rebuild_ghost_pools(self) -> None:
@@ -342,11 +355,13 @@ class MARLTrainer:
             curr_timesteps = {0: max(30_000,  timesteps_per_iter // 3),
                               1: max(60_000,  timesteps_per_iter // 2),
                               2: timesteps_per_iter}.get(self._curr_level, timesteps_per_iter)
-            curr_eval_eps  = {0: max(20, eval_episodes // 2),
-                              1: max(30, eval_episodes * 2 // 3),
+            # Level 0: 10 episodes is enough signal. Saves ~40 min per iteration.
+            # Level 1: 20 episodes. Level 2: full count for paper-quality results.
+            curr_eval_eps  = {0: 10,
+                              1: max(20, eval_episodes // 2),
                               2: eval_episodes}.get(self._curr_level, eval_episodes)
 
-            print(f"  Timesteps this iter: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}")
+            print(f"  Timesteps: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}")
 
             # ── Attacker training with live progress bar ───────────────────
             att_cb = CyberXProgressCallback(
@@ -364,7 +379,7 @@ class MARLTrainer:
                 action_space_n    = 10,
                 start_eps         = 0.30,
                 end_eps           = 0.0,
-                warmup_iters      = 6,
+                warmup_iters      = 12,
                 current_iteration = iteration,
             )
             att_envs = self._make_vec_env("attacker", att_opp, att_opp_path)
@@ -392,7 +407,7 @@ class MARLTrainer:
                 action_space_n    = 10,
                 start_eps         = 0.20,
                 end_eps           = 0.0,
-                warmup_iters      = 6,
+                warmup_iters      = 12,
                 current_iteration = iteration,
             )
             def_envs = self._make_vec_env("defender", def_opp, def_opp_path)
@@ -404,9 +419,30 @@ class MARLTrainer:
                 callback            = [def_cb, def_eps_cb],
             )
 
-            if n_iterations > 2:
+            # Checkpoint — expensive on Windows CUDA (~60-90 min per save).
+            # At level 0+1: only save every 5 iterations. Always save at level 2.
+            should_checkpoint = (
+                n_iterations > 2 and
+                (self._curr_level == 2 or iteration % 5 == 0)
+            )
+            if should_checkpoint:
+                print("  Saving checkpoint...", flush=True)
                 self._checkpoint(iteration)
 
+            # At level 0, skip baseline matches entirely — only run the main
+            # attacker-vs-defender match. Saves ~50 min per iteration.
+            # Baselines only matter for curriculum promotion decisions (level 1+).
+            if self._curr_level == 0:
+                n_matches  = 1
+                total_eps  = curr_eval_eps
+                run_baselines = False
+            else:
+                n_matches  = 1 + 3 + 3
+                total_eps  = curr_eval_eps * n_matches
+                run_baselines = True
+
+            print(f"  Evaluating ({total_eps} eps, {n_matches} match{'es' if n_matches>1 else ''})...",
+                  flush=True)
             metrics = self.evaluator.evaluate_iteration(
                 iteration        = iteration,
                 attacker         = self.attacker,
@@ -415,15 +451,15 @@ class MARLTrainer:
                     "random":   RandomAttacker(),
                     "scripted": ScriptedAttacker(),
                     "expert":   ExpertAttacker(),
-                },
+                } if run_baselines else {},
                 baselines_def    = {
                     "random":   RandomDefender(),
                     "scripted": ScriptedDefender(),
                     "expert":   ExpertDefender(),
-                },
+                } if run_baselines else {},
                 n_episodes       = curr_eval_eps,
                 curriculum_level = self._curr_level,
-                silent           = True,   # rich panel printed by print_iteration_summary
+                silent           = True,
             )
 
             iter_elapsed = time.time() - iter_t0
@@ -571,20 +607,12 @@ class MARLTrainer:
 
     # ── Utilities ──────────────────────────────────────────────────────────────
 
-    def _make_vec_env(self, mode: str, opponent=None, opponent_path: str = None):
-        """
-        Create a vectorised env.
-
-        At curriculum levels 0 and 1, the opponent is a scripted agent
-        (picklable) → SubprocVecEnv with 8 true parallel workers.
-
-        At level 2, the opponent is an RL agent.  We pass opponent_path
-        so each subprocess can load weights independently from disk,
-        avoiding CUDA tensor serialization across process boundaries.
-        """
+    def _make_vec_env(self, mode: str, opponent=None, opponent_path: str = None,
+                      n_envs_override: int = None):
+        n = n_envs_override if n_envs_override is not None else self.n_envs
         return make_parallel_envs(
             mode             = mode,
-            n_envs           = self.n_envs,
+            n_envs           = n,
             curriculum_level = self._curr_level,
             opponent         = opponent,
             opponent_path    = opponent_path,

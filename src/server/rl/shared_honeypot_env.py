@@ -126,6 +126,7 @@ class SharedHoneypotEnv(gym.Env):
             # Defender internal counters
             "false_positives":    0,
             "blocks_issued":      0,
+            "active_deception_count": 0,
             # For time-to-detect reward shaping
             "first_detection_step": None,
         }
@@ -356,12 +357,16 @@ class SharedHoneypotEnv(gym.Env):
                 r -= 1.0   # wasteful if no intruder
 
         elif action == 6:
-            # Trigger alert – useful if evidence is mounting
+            # Trigger alert — capped at 2 per episode.
+            # Beyond that it becomes noise and actively penalises.
             if ts["suspicious_events"] >= 2:
                 ts["alerts_triggered"] += 1
-                r += 5.0
                 if ts["first_detection_step"] is None:
                     ts["first_detection_step"] = self.current_step
+                if ts["alerts_triggered"] <= 2:
+                    r += 5.0
+                else:
+                    r -= 3.0   # spam penalty
             else:
                 ts["false_positives"] += 1
                 r -= 2.0
@@ -381,11 +386,17 @@ class SharedHoneypotEnv(gym.Env):
             r -= 4.0
 
         elif action == 9:
-            # Active deception (honeytokens) – reward if decoys present
-            if ts["decoys_deployed"] > 0:
-                r += 3.0
+            # Active deception (honeytokens) — reward if decoys present.
+            # Capped at 3 per episode to prevent spam equilibrium.
+            active_deception_count = ts.get("active_deception_count", 0)
+            ts["active_deception_count"] = active_deception_count + 1
+            if active_deception_count < 3:
+                if ts["decoys_deployed"] > 0:
+                    r += 3.0
+                else:
+                    r += 0.5
             else:
-                r += 0.5
+                r += 0.1   # minimal reward after cap
 
         # Small passive reward per decoy per step (encouraging setup)
         r += ts["decoys_deployed"] * 0.1
@@ -447,24 +458,29 @@ class SharedHoneypotEnv(gym.Env):
                 r -= 2.0
 
         elif action == 3:
-            # Exfiltrate data (files, credentials)
+            # Exfiltrate data. Capped at 3 — after that actively penalises
+            # to make priv-esc strictly better than continued exfil spam.
             if cur >= STATE_USER_ACCESS:
                 ts["files_downloaded"] += 1
                 ts["suspicious_events"] += 2
                 ts["att_last_success"] = 1
-                r += 10.0
+                if ts["files_downloaded"] <= 3:
+                    r += 10.0
+                else:
+                    r -= 1.0   # negative after cap forces escalation
             else:
                 r -= 3.0
 
         elif action == 4:
-            # Privilege escalation (USER → ROOT)
+            # Privilege escalation (USER → ROOT). Raised to 25 so expected
+            # value (40% × 25 = 10) clearly beats post-cap exfil (−1).
             if cur == STATE_USER_ACCESS:
                 success_prob = 0.40 - decoy_penalty * 0.05
                 if random.random() < max(0.10, success_prob):
                     ts["kill_chain_level"] = STATE_ROOT_ACCESS
                     ts["suspicious_events"] += 3
                     ts["att_last_success"] = 1
-                    r += 20.0
+                    r += 25.0
                 else:
                     r -= 1.0
             else:
@@ -513,17 +529,16 @@ class SharedHoneypotEnv(gym.Env):
             ts["att_last_success"] = 1   # not failing = success by definition
 
         # Survival / time-pressure rewards.
-        # EXTERNAL penalty: the attacker MUST try to advance — waiting is losing.
-        # This directly fixes the "wait forever at EXTERNAL" entropy collapse.
-        # The penalty scales with how long they've been stuck: mild early,
-        # punishing after step 20 so the agent is forced to commit.
         if ts["kill_chain_level"] == STATE_EXTERNAL:
-            steps_stuck = max(0, self.current_step - 5)  # grace period of 5 steps
-            r -= 0.3 + min(0.5, steps_stuck * 0.02)      # ramps from -0.3 to -0.8
+            steps_stuck = max(0, self.current_step - 5)
+            r -= 0.3 + min(0.5, steps_stuck * 0.02)
         elif ts["kill_chain_level"] == STATE_USER_ACCESS:
-            r += 0.5   # reward for maintaining foothold
+            r += 0.5
         elif ts["kill_chain_level"] == STATE_ROOT_ACCESS:
-            r += 1.0   # reward for maintaining full compromise
+            # ROOT bonus is substantially higher than USER so the attacker
+            # prefers escalating over staying at USER and spamming exfiltrate.
+            # +2.0/step at ROOT vs +0.5 at USER = strong incentive to escalate.
+            r += 2.0
 
         return r
 

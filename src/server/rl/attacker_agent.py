@@ -73,7 +73,7 @@ class AttackerAgent:
         self,
         env: DummyVecEnv,
         learning_rate: float = 3e-4,
-        ent_coef:      float = 0.05,   # raised from 0.01 — prevents "wait forever" entropy collapse
+        ent_coef:      float = 0.10,   # 0.05 proven insufficient — LSTM collapses after warmup
         device:        str   = "auto",
     ):
         self.env = env
@@ -154,7 +154,7 @@ class AttackerAgent:
         self.model.save(path)
 
     def load(self, path: str) -> None:
-        self.model = RecurrentPPO.load(path, env=self.env)
+        self.model = RecurrentPPO.load(path, env=self.env, device=self.model.device)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

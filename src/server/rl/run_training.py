@@ -64,6 +64,10 @@ def main():
     parser.add_argument("--device",        type=str,   default="auto",
                         help="'cuda', 'cpu', or 'auto'")
     parser.add_argument(
+        "--parallel", action="store_true",
+        help="Use SubprocVecEnv for parallel envs (Linux/WSL only — deadlocks on native Windows)"
+    )
+    parser.add_argument(
         "--resume", action="store_true",
         help="Resume training from saved state in --save-dir"
     )
@@ -140,6 +144,9 @@ def main():
         llm_config = llm_config,
         device     = args.device,
     )
+    if args.parallel:
+        trainer.use_subprocess = True
+        print("  Parallel envs: SubprocVecEnv ENABLED")
 
     history = trainer.train(
         n_iterations         = n_iters,
