@@ -1,35 +1,24 @@
 #!/usr/bin/env python3
 """
-run_training.py  –  CyberX MARL Training Entry Point  (v2.0)
+run_training.py  –  CyberX MARL Training Entry Point  (v2.1)
 ==============================================================
-Usage examples:
+The if __name__ == "__main__" guard at the bottom is CRITICAL on Windows.
+SubprocVecEnv uses the 'spawn' start method, which re-imports this module
+in each worker process. Without the guard, workers try to re-run main(),
+causing infinite process spawning and deadlock.
 
-  # Sanity check (2 iterations, no BC, no checkpoints):
+Usage:
   python run_training.py --mode smoke
-
-  # First real training run (see learning curves by iter 10):
   python run_training.py --mode dev --no-bc
-
-  # Full overnight run:
   python run_training.py --mode full
-
-  # PAUSE: press Ctrl+C during any run — state saves automatically.
-
-  # RESUME: pick up exactly where you left off:
-  python run_training.py --resume
-  python run_training.py --mode full --resume   # honours original n_iterations
-
-  # With LLM oracle (set GEMINI_API_KEY env var or api_key in config.json):
-  python run_training.py --mode full --llm-oracle --llm-provider gemini
-
-  # Explicit GPU:
-  python run_training.py --mode full --device cuda
+  python run_training.py --mode full --resume
+  python run_training.py --mode full --no-parallel   # disable SubprocVecEnv
 """
 
 import argparse
 import json
+import multiprocessing
 import os
-import sys
 
 
 def load_config(config_path: str = "config.json") -> dict:
@@ -45,43 +34,29 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument(
-        "--mode", choices=["smoke", "dev", "full", "custom"], default="custom",
-        help="Preset training configuration"
-    )
+    parser.add_argument("--mode",
+        choices=["smoke", "dev", "full", "custom"], default="custom")
     parser.add_argument("--iterations",    type=int,   default=None)
     parser.add_argument("--timesteps",     type=int,   default=None)
     parser.add_argument("--eval-episodes", type=int,   default=None)
     parser.add_argument("--save-dir",      type=str,   default="./models/cyberx_marl")
-    parser.add_argument("--no-bc",         action="store_true",
-                        help="Skip behavioral cloning warm-up")
-    parser.add_argument("--llm-oracle",    action="store_true",
-                        help="Enable LLM oracle data collection")
+    parser.add_argument("--no-bc",         action="store_true")
+    parser.add_argument("--llm-oracle",    action="store_true")
     parser.add_argument("--llm-provider",
-                        choices=["gemini", "ollama", "anthropic", "openai"],
-                        default=None,
-                        help="Override LLM provider from config")
-    parser.add_argument("--device",        type=str,   default="auto",
-                        help="'cuda', 'cpu', or 'auto'")
-    parser.add_argument(
-        "--parallel", action="store_true",
-        help="Use SubprocVecEnv for parallel envs (Linux/WSL only — deadlocks on native Windows)"
-    )
-    parser.add_argument(
-        "--resume", action="store_true",
-        help="Resume training from saved state in --save-dir"
-    )
+        choices=["gemini", "ollama", "anthropic", "openai"], default=None)
+    parser.add_argument("--device",        type=str,   default="auto")
+    parser.add_argument("--resume",        action="store_true")
+    parser.add_argument("--no-parallel",   action="store_true",
+        help="Disable SubprocVecEnv (fallback to DummyVecEnv)")
     args = parser.parse_args()
 
-    # ── Apply presets ──────────────────────────────────────────────────────
     PRESETS = {
         "smoke": dict(iterations=2,  timesteps=5_000,   eval_episodes=10,  run_bc=False),
         "dev":   dict(iterations=10, timesteps=20_000,  eval_episodes=20,  run_bc=True),
         "full":  dict(iterations=50, timesteps=100_000, eval_episodes=50,  run_bc=True),
     }
-
     if args.mode in PRESETS:
-        p = PRESETS[args.mode]
+        p         = PRESETS[args.mode]
         n_iters   = args.iterations    or p["iterations"]
         timesteps = args.timesteps     or p["timesteps"]
         eval_eps  = args.eval_episodes or p["eval_episodes"]
@@ -92,32 +67,26 @@ def main():
         eval_eps  = args.eval_episodes or 50
         run_bc    = not args.no_bc
 
-    # ── Build LLM config ──────────────────────────────────────────────────
     cfg        = load_config()
     llm_config = cfg.get("llm", {})
     run_llm    = args.llm_oracle or llm_config.get("enabled", False)
     llm_config["enabled"] = run_llm
-
-    # CLI --llm-provider overrides config, otherwise keep config value
     if args.llm_provider:
         llm_config["provider"] = args.llm_provider
     display_provider = llm_config.get("provider", "not configured")
 
     if run_llm:
-        env_keys = {
-            "gemini":    "GEMINI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai":    "OPENAI_API_KEY",
-            "ollama":    None,
-        }
+        env_keys = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+                    "openai": "OPENAI_API_KEY", "ollama": None}
         env_key = env_keys.get(display_provider)
         if env_key and not os.environ.get(env_key) and not llm_config.get("api_key"):
-            print(f"  Warning: {env_key} not set. LLM oracle will be disabled.")
+            print(f"  Warning: {env_key} not set. LLM oracle disabled.")
             llm_config["enabled"] = False
             run_llm = False
 
-    # ── Print configuration ────────────────────────────────────────────────
-    resume_note = "  (resuming from saved state)" if args.resume else ""
+    use_parallel = not args.no_parallel
+    resume_note  = "  (resuming from saved state)" if args.resume else ""
+
     print(f"""
 ╔══════════════════════════════════════════════════════════╗
 ║         CyberX MARL  –  Training Configuration          ║
@@ -131,22 +100,20 @@ def main():
 ║  LLM provider:      {display_provider:<36} ║
 ║  Device:            {args.device:<36} ║
 ║  Resume:            {str(args.resume):<36} ║
+║  Parallel envs:     {str(use_parallel):<36} ║
 ║  Save dir:          {args.save_dir:<36} ║
 ╚══════════════════════════════════════════════════════════╝
-  Total PPO steps ≈ {n_iters * timesteps * 2:,}  (both agents combined){resume_note}
+  Total PPO steps ≈ {n_iters * timesteps * 2:,}  (both agents){resume_note}
 """)
 
-    # ── Run ────────────────────────────────────────────────────────────────
     from trainer import MARLTrainer
 
     trainer = MARLTrainer(
-        save_dir   = args.save_dir,
-        llm_config = llm_config,
-        device     = args.device,
+        save_dir      = args.save_dir,
+        llm_config    = llm_config,
+        device        = args.device,
+        use_subprocess= use_parallel,
     )
-    if args.parallel:
-        trainer.use_subprocess = True
-        print("  Parallel envs: SubprocVecEnv ENABLED")
 
     history = trainer.train(
         n_iterations         = n_iters,
@@ -158,13 +125,16 @@ def main():
     )
 
     if not trainer._pause_requested:
-        print("\n  Training complete!")
+        print(f"\n  Training complete!")
         print(f"  Best models:  {args.save_dir}/attacker_best.zip")
         print(f"                {args.save_dir}/defender_best.zip")
         print(f"  Results:      {args.save_dir}/results/")
-        print(f"  Plots:        {args.save_dir}/results/training_curves.png")
         print(f"\n  TensorBoard:  tensorboard --logdir ./logs")
 
 
+# ── CRITICAL: this guard prevents SubprocVecEnv workers from re-running ───────
+# On Windows, spawn re-imports this module in every worker process.
+# Without this guard, each worker calls main() again → infinite loop → deadlock.
 if __name__ == "__main__":
+    multiprocessing.freeze_support()   # needed for frozen (PyInstaller) builds
     main()

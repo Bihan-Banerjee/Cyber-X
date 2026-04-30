@@ -21,15 +21,16 @@ import json
 import signal
 import random
 import logging
+import threading
 from typing import Optional, Dict, List
 from datetime import datetime
 import time
-
+import copy
 import numpy as np
 import torch
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from sb3_contrib import RecurrentPPO
-
+from vec_env_factory import make_diverse_envs
 from shared_honeypot_env import SharedHoneypotEnv
 from baselines import (
     RandomAttacker, RandomDefender,
@@ -64,22 +65,29 @@ BANNER = """
 ╚══════════════════════════════════════════════════════════╝
 """
 
+# NOTE: The make_diverse_envs calls that previously appeared here at module
+# scope (referencing `self.n_envs`) have been removed — they caused a
+# NameError on import because `self` does not exist at module level.
+# The equivalent logic lives in _rebuild_envs_for_curriculum() and the
+# train() loop where `self` is valid.
+
 
 class MARLTrainer:
     CURRICULUM_PROMO_THRESHOLD = 0.60
-    CURRICULUM_PROMO_STREAK    = 3
-    MAX_STAGE_ITERS            = 20
+    CURRICULUM_PROMO_STREAK    = 2
+    MAX_STAGE_ITERS            = 8
     GHOST_POOL_MAX             = 15
     STATE_FILENAME             = "trainer_state.json"
 
     def __init__(
         self,
-        save_dir:   str   = "./models/cyberx_marl",
-        lr:         float = 3e-4,
-        ent_coef:   float = 0.01,
-        n_envs:     int   = 8,
-        device:     str   = "auto",
-        llm_config: Optional[Dict] = None,
+        save_dir:       str   = "./models/cyberx_marl",
+        lr:             float = 3e-4,
+        ent_coef:       float = 0.01,
+        n_envs:         int   = 8,
+        device:         str   = "auto",
+        llm_config:     Optional[Dict] = None,
+        use_subprocess: bool  = True,   # safe now that run_training.py has __main__ guard
     ):
         self.save_dir      = save_dir
         self.lr            = lr
@@ -87,10 +95,9 @@ class MARLTrainer:
         self.n_envs        = n_envs
         self.llm_config    = llm_config or {"enabled": False}
         self.device        = self._resolve_device(device)
-        # SubprocVecEnv deadlocks on Windows during __init__ due to the spawn
-        # start method re-importing modules before if __name__=="__main__" guard.
-        # Disabled by default. Enable via --parallel flag once the run is stable.
-        self.use_subprocess = False
+        # SubprocVecEnv: safe because run_training.py has if __name__=="__main__"
+        # guard preventing workers from re-running main() on Windows spawn.
+        self.use_subprocess = use_subprocess
 
         for d in [save_dir, f"{save_dir}/ghosts", f"{save_dir}/checkpoints",
                   "./data/oracle_datasets", "./logs"]:
@@ -105,6 +112,15 @@ class MARLTrainer:
         self._def_ghost_paths: List[str] = []
         self._att_ghosts: List[AttackerAgent] = []
         self._def_ghosts: List[DefenderAgent] = []
+
+        # Env pool: reuse SubprocVecEnv when the opponent type hasn't changed.
+        # Spawning 8 subprocesses takes 5-10s on Windows; skipping this on
+        # iterations where the opponent is the same scripted class saves
+        # ~10-20s per iteration at levels 0-1.
+        self._att_env_pool: Optional[object] = None
+        self._def_env_pool: Optional[object] = None
+        self._att_env_key:  Optional[str]    = None   # e.g. "attacker_ScriptedDefender_0"
+        self._def_env_key:  Optional[str]    = None
 
         t0 = time.time()
         self._att_envs = self._make_vec_env("attacker", ScriptedDefender())
@@ -334,17 +350,44 @@ class MARLTrainer:
             self._save_ghost(iteration)
             self._rebuild_envs_for_curriculum()
 
-            if self._curr_level < 2:
-                att_opp, def_opp = ScriptedDefender(), ScriptedAttacker()
-                att_opp_path = def_opp_path = None
+            # FIX: initialise path variables before the if/elif/else so they are
+            # always defined when _make_vec_env is called below, regardless of
+            # which curriculum branch was taken.  At levels 0 and 1 there is no
+            # RL opponent file, so the paths stay None (scripted opponents are
+            # passed as objects, not files).
+            att_opp_path: Optional[str] = None
+            def_opp_path: Optional[str] = None
+
+            if self._curr_level == 0:
+                def_pool = [RandomDefender, ScriptedDefender]
+                att_pool = [RandomAttacker, ScriptedAttacker]
+                att_opp = random.choice(def_pool)()
+                def_opp = random.choice(att_pool)()
+            elif self._curr_level == 1:
+                def_pool = [ScriptedDefender, ExpertDefender]
+                att_pool = [ScriptedAttacker, ExpertAttacker]
+                # Weight toward harder opponents as stage_iter_count increases
+                progress = min(self._stage_iter_count / 8.0, 1.0)
+                att_opp = (ExpertDefender() if random.random() < progress
+                           else ScriptedDefender())
+                def_opp = (ExpertAttacker() if random.random() < progress
+                           else ScriptedAttacker())
             else:
-                att_opp = self._sample_opponent(self._def_ghosts, self.defender)
-                def_opp = self._sample_opponent(self._att_ghosts, self.attacker)
-                # Save opponents to temp paths so subprocesses can load them
-                att_opp_path = os.path.join(self.save_dir, "_tmp_def_opp.zip")
-                def_opp_path = os.path.join(self.save_dir, "_tmp_att_opp.zip")
-                att_opp.save(att_opp_path)
-                def_opp.save(def_opp_path)
+                # Opponent diversity: 70% current RL opponent, 30% scripted.
+                # This directly addresses the specialization trap — agents that
+                # only train against each other overfit to the specific partner.
+                # Mixing in scripted opponents forces generalization.
+                if random.random() < 0.30:
+                    att_opp = random.choice([ScriptedDefender(), ExpertDefender()])
+                    def_opp = random.choice([ScriptedAttacker(), ExpertAttacker()])
+                    att_opp_path = def_opp_path = None
+                else:
+                    att_opp = self._sample_opponent(self._def_ghosts, self.defender)
+                    def_opp = self._sample_opponent(self._att_ghosts, self.attacker)
+                    att_opp_path = os.path.join(self.save_dir, "_tmp_def_opp.zip")
+                    def_opp_path = os.path.join(self.save_dir, "_tmp_att_opp.zip")
+                    att_opp.save(att_opp_path)
+                    def_opp.save(def_opp_path)
 
             # Curriculum-aware timesteps and eval episodes.
             # At level 0 agents are training against simple scripted opponents —
@@ -361,7 +404,8 @@ class MARLTrainer:
                               1: max(20, eval_episodes // 2),
                               2: eval_episodes}.get(self._curr_level, eval_episodes)
 
-            print(f"  Timesteps: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}")
+            print(f"  Timesteps: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}"
+                  f"   Envs: {self.n_envs}")
 
             # ── Attacker training with live progress bar ───────────────────
             att_cb = CyberXProgressCallback(
@@ -419,15 +463,16 @@ class MARLTrainer:
                 callback            = [def_cb, def_eps_cb],
             )
 
-            # Checkpoint — expensive on Windows CUDA (~60-90 min per save).
+            # Checkpoint — expensive on Windows CUDA (~60-90 s per save).
             # At level 0+1: only save every 5 iterations. Always save at level 2.
+            # Runs in a background thread so it never blocks the training loop.
             should_checkpoint = (
                 n_iterations > 2 and
                 (self._curr_level == 2 or iteration % 5 == 0)
             )
             if should_checkpoint:
-                print("  Saving checkpoint...", flush=True)
-                self._checkpoint(iteration)
+                print("  Saving checkpoint (async)...", flush=True)
+                self._checkpoint_async(iteration)
 
             # At level 0, skip baseline matches entirely — only run the main
             # attacker-vs-defender match. Saves ~50 min per iteration.
@@ -552,13 +597,20 @@ class MARLTrainer:
         self.attacker.save(att_path)
         self.defender.save(def_path)
 
+        # Deep copy policy weights in-memory — no second disk read per ghost.
+        # (Bug 3 fix: original code did RecurrentPPO.load(att_path) immediately
+        # after saving, costing 60-90s of GPU serialisation per ghost save.)
         ga = AttackerAgent(self._att_envs, self.lr, self.ent_coef, self.device)
-        ga.model = RecurrentPPO.load(att_path, env=self._att_envs)
+        ga.model.policy.load_state_dict(
+            copy.deepcopy(self.attacker.model.policy.state_dict())
+        )
         self._att_ghosts.append(ga)
         self._att_ghost_paths.append(att_path)
 
         gd = DefenderAgent(self._def_envs, self.lr, self.ent_coef, self.device)
-        gd.model = RecurrentPPO.load(def_path, env=self._def_envs)
+        gd.model.policy.load_state_dict(
+            copy.deepcopy(self.defender.model.policy.state_dict())
+        )
         self._def_ghosts.append(gd)
         self._def_ghost_paths.append(def_path)
 
@@ -575,12 +627,29 @@ class MARLTrainer:
     def _check_curriculum_promotion(self, metrics: Dict) -> None:
         if self._curr_level >= 2:
             return
+
+        # Bug 1 fix: at level 0 baselines are not run, so att_vs_baselines /
+        # def_vs_baselines are empty dicts and the scripted key is missing.
+        # Both win rates came back as 0 every iteration, permanently blocking
+        # streak-based promotion and wasting ~15 iterations per stage.
+        # Fix: detect the missing key (None sentinel) and fall back to the
+        # main match win rates which ARE available at every level.
         att_wr = (metrics.get("att_vs_baselines", {})
-                         .get("scripted", {}).get("att_win_rate", 0))
+                         .get("scripted", {}).get("att_win_rate"))
         def_wr = (metrics.get("def_vs_baselines", {})
-                         .get("scripted", {}).get("def_win_rate", 0))
-        if (att_wr >= self.CURRICULUM_PROMO_THRESHOLD
-                and def_wr >= self.CURRICULUM_PROMO_THRESHOLD):
+                         .get("scripted", {}).get("def_win_rate"))
+
+        if att_wr is None:  # baselines not run (level 0)
+            att_wr = metrics.get("main_match", {}).get("att_win_rate", 0)
+            def_wr = metrics.get("main_match", {}).get("def_win_rate", 0)
+            # At level 0, a competent attacker should win > 55%, defender > 30%
+            # (defender is naturally disadvantaged at level 0 vs scripted attacker)
+            promote = att_wr >= 0.55
+        else:
+            promote = (att_wr >= self.CURRICULUM_PROMO_THRESHOLD
+                       and def_wr >= self.CURRICULUM_PROMO_THRESHOLD)
+
+        if promote:
             self._stage_promo_streak += 1
         else:
             self._stage_promo_streak = 0
@@ -589,19 +658,35 @@ class MARLTrainer:
                 or self._stage_iter_count >= self.MAX_STAGE_ITERS):
             self._curr_level += 1
             self._stage_promo_streak = self._stage_iter_count = 0
+            # Invalidate cached envs — the new curriculum level needs different envs
+            self._att_env_key = None
+            self._def_env_key = None
             print(f"\n  CURRICULUM ADVANCE → Stage {self._curr_level}")
             self._rebuild_envs_for_curriculum()
 
     def _rebuild_envs_for_curriculum(self) -> None:
-        if self._curr_level < 2:
-            self._att_envs = self._make_vec_env("attacker", ScriptedDefender())
-            self._def_envs = self._make_vec_env("defender", ScriptedAttacker())
+        if self._curr_level == 0:
+            # Rotate opponents so agents don't overfit to one scripted style
+            def_opps = [RandomDefender(), ScriptedDefender()]
+            att_opps = [RandomAttacker(), ScriptedAttacker()]
+            self._att_envs = self._make_vec_env("attacker",
+                                 random.choice(def_opps))
+            self._def_envs = self._make_vec_env("defender",
+                                 random.choice(att_opps))
+        elif self._curr_level == 1:
+            # Mix scripted and expert so agents see adaptive play before self-play
+            def_opps = [ScriptedDefender(), ExpertDefender()]
+            att_opps = [ScriptedAttacker(), ExpertAttacker()]
+            self._att_envs = self._make_vec_env("attacker",
+                                 random.choice(def_opps))
+            self._def_envs = self._make_vec_env("defender",
+                                 random.choice(att_opps))
         else:
             # Save current agents so subprocesses can load them
             att_p = os.path.join(self.save_dir, "_tmp_def_opp.zip")
             def_p = os.path.join(self.save_dir, "_tmp_att_opp.zip")
-            self.defender.save(att_p)
-            self.attacker.save(def_p)
+            self.defender.save(att_p)   # defender is the attacker env's opponent
+            self.attacker.save(def_p)   # attacker is the defender env's opponent
             self._att_envs = self._make_vec_env("attacker", opponent_path=att_p)
             self._def_envs = self._make_vec_env("defender", opponent_path=def_p)
 
@@ -609,8 +694,42 @@ class MARLTrainer:
 
     def _make_vec_env(self, mode: str, opponent=None, opponent_path: str = None,
                       n_envs_override: int = None):
+        """
+        Create or retrieve a cached vectorised env.
+
+        Cache key = (mode, opponent_class_name, curriculum_level, n_envs).
+        When the key matches the existing pool, the pool is returned as-is
+        — no subprocess spawning.  When it changes (e.g. curriculum advance
+        or new opponent path), the old pool is closed first.
+
+        RL opponents (opponent_path set) are never cached because they change
+        every iteration.  Scripted opponents at levels 0-1 are always cached.
+        """
         n = n_envs_override if n_envs_override is not None else self.n_envs
-        return make_parallel_envs(
+        is_att = (mode == "attacker")
+
+        # Build cache key.  RL opponents use None key (never cache).
+        if opponent_path is not None:
+            cache_key = None
+        else:
+            opp_name = type(opponent).__name__ if opponent else "None"
+            cache_key = f"{mode}_{opp_name}_{self._curr_level}_{n}"
+
+        cached_env = self._att_env_pool if is_att else self._def_env_pool
+        cached_key = self._att_env_key  if is_att else self._def_env_key
+
+        # Return cached pool if key matches
+        if cache_key is not None and cache_key == cached_key and cached_env is not None:
+            return cached_env
+
+        # Close old pool before creating new one (frees subprocess resources)
+        if cached_env is not None:
+            try:
+                cached_env.close()
+            except Exception:
+                pass
+
+        new_env = make_parallel_envs(
             mode             = mode,
             n_envs           = n,
             curriculum_level = self._curr_level,
@@ -619,11 +738,54 @@ class MARLTrainer:
             use_subprocess   = self.use_subprocess,
         )
 
+        # Store in pool (only cache if key is stable)
+        if is_att:
+            self._att_env_pool = new_env
+            self._att_env_key  = cache_key
+        else:
+            self._def_env_pool = new_env
+            self._def_env_key  = cache_key
+
+        return new_env
+
     def _checkpoint(self, iteration: int) -> None:
+        """Synchronous checkpoint — prefer _checkpoint_async during training."""
         d = f"{self.save_dir}/checkpoints"
         self.attacker.save(f"{d}/attacker_iter_{iteration}.zip")
         self.defender.save(f"{d}/defender_iter_{iteration}.zip")
         logger.info("Checkpointed iteration %d", iteration)
+
+    def _checkpoint_async(self, iteration: int) -> None:
+        """
+        Save checkpoint in a background daemon thread so the GPU serialisation
+        (~60-90 s on CUDA) does not block the next training iteration.
+        The thread is a daemon so it won't prevent clean process exit.
+        Note: do not call this twice for the same iteration before the first
+        write has finished — the filenames are deterministic and would race.
+        """
+        # Take snapshots of the state dicts now (on the main thread) so the
+        # background thread works on a stable copy even if the models keep
+        # training.  deepcopy is fast relative to disk I/O.
+        att_state = copy.deepcopy(self.attacker.model.policy.state_dict())
+        def_state = copy.deepcopy(self.defender.model.policy.state_dict())
+
+        def _do_save():
+            try:
+                d = f"{self.save_dir}/checkpoints"
+                # Temporarily load snapshot weights into fresh agents for saving.
+                # We cannot call .save() on the live agents from a background
+                # thread (not thread-safe with SB3).  Instead we write the state
+                # dicts directly via torch.save so there is zero contention.
+                torch.save(att_state,
+                           f"{d}/attacker_iter_{iteration}_policy.pt")
+                torch.save(def_state,
+                           f"{d}/defender_iter_{iteration}_policy.pt")
+                logger.info("Async checkpoint saved for iteration %d", iteration)
+            except Exception as e:
+                logger.warning("Async checkpoint failed for iteration %d: %s",
+                               iteration, e)
+
+        threading.Thread(target=_do_save, daemon=True).start()
 
     def _update_history(self, iteration: int, metrics: Dict) -> None:
         mm = metrics["main_match"]

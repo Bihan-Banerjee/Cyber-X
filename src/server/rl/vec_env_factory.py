@@ -10,6 +10,12 @@ This module provides:
     Creates a SubprocVecEnv for training.  Falls back to DummyVecEnv
     automatically if subprocess creation fails (e.g. in notebooks).
 
+  make_diverse_envs(...)
+    Creates a VecEnv where each worker gets a DIFFERENT opponent sampled
+    from a pool of classes.  Prevents specialisation to a single style.
+    Used for levels 0 and 1 so the policy sees varied opponents every
+    rollout rather than 8 identical copies of one scripted agent.
+
   make_eval_env(...)
     Creates a single unwrapped env for evaluation (no vec wrapping needed).
 
@@ -18,9 +24,9 @@ and loaded fresh inside each subprocess, avoiding CUDA serialization issues.
 """
 
 import os
-import tempfile
+import random
 import logging
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,58 @@ def _make_model_env_fn(
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
+
+def make_diverse_envs(
+    mode:             str,
+    n_envs:           int,
+    curriculum_level: int,
+    opponent_pool:    List[type],
+    use_subprocess:   bool = True,
+):
+    """
+    Create a VecEnv where EACH worker independently samples a different
+    opponent class from opponent_pool.
+
+    This is the primary anti-specialisation mechanism for levels 0 and 1.
+    With 8 workers and a pool of [ScriptedDefender, ExpertDefender], each
+    PPO rollout contains experience against multiple opponent styles in the
+    same gradient update, preventing the policy from memorising one opponent.
+
+    Parameters
+    ----------
+    mode             : 'attacker' | 'defender'
+    n_envs           : number of parallel environments
+    curriculum_level : 0 | 1 | 2
+    opponent_pool    : list of CLASS objects (not instances) to sample from
+    use_subprocess   : if True, attempt SubprocVecEnv; fall back to DummyVecEnv
+
+    Returns
+    -------
+    VecEnv (SubprocVecEnv or DummyVecEnv)
+    """
+    env_fns = [
+        _make_scripted_env_fn(mode, random.choice(opponent_pool), curriculum_level)
+        for _ in range(n_envs)
+    ]
+
+    if not use_subprocess or n_envs == 1:
+        from stable_baselines3.common.vec_env import DummyVecEnv
+        return DummyVecEnv(env_fns)
+
+    try:
+        from stable_baselines3.common.vec_env import SubprocVecEnv
+        vec_env = SubprocVecEnv(env_fns, start_method="spawn")
+        logger.info(
+            "make_diverse_envs: SubprocVecEnv %d workers, mode=%s, level=%d, pool=%s",
+            n_envs, mode, curriculum_level,
+            [c.__name__ for c in opponent_pool],
+        )
+        return vec_env
+    except Exception as e:
+        logger.warning("make_diverse_envs: SubprocVecEnv failed (%s), using DummyVecEnv", e)
+        from stable_baselines3.common.vec_env import DummyVecEnv
+        return DummyVecEnv(env_fns)
+
 
 def make_parallel_envs(
     mode:              str,
@@ -150,8 +208,11 @@ def make_parallel_envs(
 
 
 class _NullOpponent:
-    """Random-policy fallback when no opponent is specified."""
+    """
+    Random-policy fallback when no opponent is specified.
+    Uses a fixed pool of valid actions rather than the full 0-9 range
+    so it stays curriculum-compatible.
+    """
     def __init__(self): pass
     def predict(self, obs, deterministic=True):
-        import random
         return random.randint(0, 9), None

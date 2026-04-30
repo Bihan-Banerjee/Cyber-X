@@ -1,5 +1,5 @@
 """
-llm_oracle.py  –  CyberX LLM Strategy Oracle  (v1.0)
+llm_oracle.py  –  CyberX LLM Strategy Oracle  (v1.1)
 ======================================================
 This module is the core NOVEL CONTRIBUTION of the research paper.
 
@@ -22,6 +22,10 @@ Usage in training (from trainer.py):
     action = oracle.query(observation, env_state)
     oracle.record_transition(obs, action, reward, next_obs, done)
     oracle.save_dataset("./data/oracle_attacker.npz")
+
+v1.1 fix: renamed internal cache dict from self.cache_size (confusing — it
+          was the actual cache storage, not a size value) to self._cache.
+          self._max_cache remains the integer capacity limit.
 """
 
 import json
@@ -161,8 +165,11 @@ class LLMOracle:
         assert role in ("attacker", "defender")
         self.role = role
         self.config = config
-        self.cache_size: Dict[str, int] = {}
-        self._max_cache = cache_size
+
+        # Internal response cache: maps state_hash → action int.
+        # Named _cache to distinguish from _max_cache (the capacity limit).
+        self._cache: Dict[str, int] = {}
+        self._max_cache: int = cache_size
 
         # Dataset buffers for behavioral cloning
         self._obs_buf:    list = []
@@ -223,10 +230,10 @@ class LLMOracle:
         user_msg = self._format_user_message(observation, env_state, cum_reward, max_steps)
         cache_key = self._hash(user_msg)
 
-        # Check cache
-        if cache_key in self.cache_size:
+        # Check cache — _cache maps hash → action int
+        if cache_key in self._cache:
             self.cache_hits += 1
-            return self.cache_size[cache_key]  # type: ignore[return-value]
+            return self._cache[cache_key]
 
         self.total_queries += 1
         raw_response = self._call_api(user_msg)
@@ -239,11 +246,11 @@ class LLMOracle:
             self.parse_failures += 1
             return None
 
-        # Cache the result (evict oldest entry if full)
-        if len(self.cache_size) >= self._max_cache:
-            oldest = next(iter(self.cache_size))
-            del self.cache_size[oldest]
-        self.cache_size[cache_key] = action  # type: ignore[assignment]
+        # Cache the result — evict oldest entry (FIFO) when at capacity
+        if len(self._cache) >= self._max_cache:
+            oldest = next(iter(self._cache))
+            del self._cache[oldest]
+        self._cache[cache_key] = action
 
         return action
 
@@ -288,6 +295,8 @@ class LLMOracle:
             "total_queries":   self.total_queries,
             "cache_hits":      self.cache_hits,
             "cache_hit_rate":  self.cache_hits / max(1, self.total_queries),
+            "cache_size":      len(self._cache),
+            "cache_capacity":  self._max_cache,
             "parse_failures":  self.parse_failures,
             "api_errors":      self.api_errors,
             "dataset_size":    len(self._obs_buf),

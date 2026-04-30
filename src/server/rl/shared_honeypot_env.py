@@ -47,10 +47,6 @@ CURRICULUM_CONFIG = {
     2: {"noise_rate": 0.15, "max_steps": 100, "att_mask": list(range(10)),  "def_mask": list(range(10))},
 }
 
-# ── Observation normalisers (upper bounds for L∞ normalisation) ───────────────
-ATT_OBS_MAX = np.array([2.0, 100.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-DEF_OBS_MAX = np.array([50.0, 30.0, 1.0, 100.0, 20.0, 1.0, 0.0, 0.0], dtype=np.float32)
-
 
 class SharedHoneypotEnv(gym.Env):
     """
