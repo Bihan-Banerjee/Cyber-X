@@ -75,11 +75,11 @@ import { lookupPhoneNumber } from '../scanners/phoneNumberOSINT.js';
 import { checkDomainReputation } from '../scanners/domainReputation.js';
 import { generateWordlist as generateWordlistP3 } from '../scanners/wordlistGenerator.js';
 import { analyzeAPK } from '../scanners/apkAnalyzer.js';
-import { crackWPAHandshake } from '../scanners/wifiHandshakeCracker.js';
-import { findAzureBlobs } from '../scanners/azureBlobFinder.js';
-import { findGCPBuckets } from '../scanners/gcpBucketFinder.js';
-import { findROPGadgets } from '../scanners/ropGadgetFinder.js';
-import { checkDarkWebMentions } from '../scanners/darkWebChecker.js';
+import { crackWifiHandshake } from '../scanners/wifiHandshakeCracker.js';
+import { performAzureBlobFinding } from '../scanners/azureBlobFinder.js';
+import { performGCPBucketFinding } from '../scanners/gcpBucketFinder.js';
+import { findGadgets } from '../scanners/ropGadgetFinder.js';
+import { checkDarkWeb } from '../scanners/darkWebChecker.js';
 import { analyzeDiskImage } from '../scanners/diskImageAnalyzer.js';
 import { performCompanyOSINT } from '../scanners/companyOSINT.js';
 import { testAWSMetadata } from '../scanners/awsMetadataTester.js';
@@ -1925,7 +1925,7 @@ router.post('/wifi-crack', wifiLimiter, upload.single('capFile'), async (req, re
     if (!req.file) return res.status(400).json({ error: 'No capture file uploaded' });
     const wordlist = req.body.wordlist || '';
     logToolActivity('WiFi Cracker', `Cracking handshake from: ${req.file.originalname}`, 'info');
-    const result = await crackWPAHandshake(req.file.buffer, wordlist, 30000);
+    const result = await crackWifiHandshake(req.file.buffer, wordlist, 30000);
     logToolActivity('WiFi Cracker', `Completed crack attempt`, 'success');
     res.json(result);
   } catch (error: any) {
@@ -1940,7 +1940,7 @@ router.post('/azure-blob-find', async (req, res) => {
     const { keyword, timeoutMs = 15000 } = req.body;
     if (!keyword || typeof keyword !== 'string') return res.status(400).json({ error: 'Invalid keyword' });
     logToolActivity('Azure Blob Finder', `Searching for: ${keyword}`, 'info');
-    const result = await findAzureBlobs(keyword.trim(), Math.min(timeoutMs, 60000));
+    const result = await performAzureBlobFinding(keyword.trim());
     logToolActivity('Azure Blob Finder', `Completed search for: ${keyword}`, 'success');
     res.json(result);
   } catch (error: any) {
@@ -1955,7 +1955,7 @@ router.post('/gcp-bucket-find', async (req, res) => {
     const { keyword, timeoutMs = 15000 } = req.body;
     if (!keyword || typeof keyword !== 'string') return res.status(400).json({ error: 'Invalid keyword' });
     logToolActivity('GCP Bucket Finder', `Searching for: ${keyword}`, 'info');
-    const result = await findGCPBuckets(keyword.trim(), Math.min(timeoutMs, 60000));
+    const result = await performGCPBucketFinding(keyword.trim());
     logToolActivity('GCP Bucket Finder', `Completed search for: ${keyword}`, 'success');
     res.json(result);
   } catch (error: any) {
@@ -1970,7 +1970,7 @@ router.post('/rop-gadgets', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const arch = req.body.arch || 'x64';
     logToolActivity('ROP Gadget Finder', `Finding gadgets in: ${req.file.originalname}`, 'info');
-    const result = await findROPGadgets(req.file.buffer, arch);
+    const result = await findGadgets(req.file.buffer, arch);
     logToolActivity('ROP Gadget Finder', `Completed gadget search`, 'success');
     res.json(result);
   } catch (error: any) {
@@ -1985,7 +1985,7 @@ router.post('/dark-web-check', async (req, res) => {
     const { query, type = 'keyword' } = req.body;
     if (!query || typeof query !== 'string') return res.status(400).json({ error: 'Invalid query' });
     logToolActivity('Dark Web Checker', `Searching for: ${query}`, 'info');
-    const result = await checkDarkWebMentions(query.trim(), type);
+    const result = await checkDarkWeb(query.trim(), type);
     logToolActivity('Dark Web Checker', `Completed dark web search`, 'success');
     res.json(result);
   } catch (error: any) {
