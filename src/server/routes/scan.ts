@@ -1593,7 +1593,7 @@ router.post('/exploit-search', exploitLimiter, async (req, res) => {
     if (!query || typeof query !== 'string') return res.status(400).json({ error: 'Invalid query' });
     const safeLimit = Math.min(Math.max(parseInt(limit), 1), 50);
     logToolActivity('Exploit-DB Search', `Searching for: ${query}`, 'info');
-    const result = await searchExploitDB(query.trim(), safeLimit);
+    const result = await searchExploitDB(query.trim(), platform || '', type || '', safeLimit);
     logToolActivity('Exploit-DB Search', `Found results for: ${query}`, 'success');
     res.json(result);
   } catch (error: any) {
@@ -1923,9 +1923,11 @@ const wifiLimiter = createRateLimiter(3, 60000);
 router.post('/wifi-crack', wifiLimiter, upload.single('capFile'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No capture file uploaded' });
-    const wordlist = req.body.wordlist || '';
-    logToolActivity('WiFi Cracker', `Cracking handshake from: ${req.file.originalname}`, 'info');
-    const result = await crackWifiHandshake(req.file.buffer, wordlist, 30000);
+    const ssid = (req.body.ssid || '').trim();
+    const wordlistRaw: string = req.body.wordlist || '';
+    const wordlist = wordlistRaw.split('\n').filter((w: string) => w.trim().length > 0);
+    logToolActivity('WiFi Cracker', `Cracking handshake for SSID: ${ssid || '(none)'}`, 'info');
+    const result = await crackWifiHandshake(ssid, wordlist);
     logToolActivity('WiFi Cracker', `Completed crack attempt`, 'success');
     res.json(result);
   } catch (error: any) {
@@ -1970,7 +1972,7 @@ router.post('/rop-gadgets', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const arch = req.body.arch || 'x64';
     logToolActivity('ROP Gadget Finder', `Finding gadgets in: ${req.file.originalname}`, 'info');
-    const result = await findGadgets(req.file.buffer, arch);
+    const result = await findGadgets(req.file.buffer, req.file.originalname, arch);
     logToolActivity('ROP Gadget Finder', `Completed gadget search`, 'success');
     res.json(result);
   } catch (error: any) {

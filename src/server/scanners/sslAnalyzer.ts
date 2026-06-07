@@ -91,9 +91,9 @@ export async function performSSLAnalysis(
           const vulnerabilities: SSLVulnerability[] = [];
 
           // Check self-signed
-          const isSelfSigned =
+          const isSelfSigned: boolean =
             !cert.issuerCertificate ||
-            (cert.issuerCertificate.fingerprint &&
+            !!(cert.issuerCertificate.fingerprint &&
               cert.issuerCertificate.fingerprint === cert.fingerprint);
 
           if (isSelfSigned) {

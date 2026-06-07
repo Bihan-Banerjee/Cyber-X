@@ -70,6 +70,8 @@ export async function calculateFileHashes(
   let detectedMime = mimeType;
   let detectedExt = ext;
   try {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore – file-type is optional; graceful fallback in catch block
     const { fileTypeFromBuffer } = await import('file-type');
     const fileType = await fileTypeFromBuffer(buffer);
     if (fileType) {
