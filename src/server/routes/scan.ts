@@ -2430,5 +2430,4 @@ router.post('/credential-check', credLimiter, async (req, res) => {
     res.status(500).json({ error: 'Credential check failed', message: error.message });
   }
 });
-
-export default router;
+*/
