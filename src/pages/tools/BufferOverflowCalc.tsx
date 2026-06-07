@@ -192,7 +192,7 @@ except Exception as e:
                 <label className="block text-sm text-cyber-cyan mb-1 tracking-wide">CYCLIC PATTERN</label>
                 <textarea
                   className="w-full bg-black/50 border border-cyber-cyan/30 text-cyber-cyan rounded p-2 text-xs font-mono h-24 resize-none"
-                  placeholder="Paste cyclic pattern here... (generate with: python3 -c \"import pwn; print(pwn.cyclic(500))\")"
+                  placeholder={'Paste cyclic pattern here... (generate with: python3 -c "import pwn; print(pwn.cyclic(500))")'}
                   value={cyclicPattern}
                   onChange={(e) => setCyclicPattern(e.target.value)}
                 />
