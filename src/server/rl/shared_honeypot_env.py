@@ -1,30 +1,60 @@
 """
-shared_honeypot_env.py  –  CyberX MARL Environment  (v2.0)
+shared_honeypot_env.py  –  CyberX MARL Environment  (v3.0)
 ============================================================
-Key fixes vs v1:
-  • Blocking no longer terminates the episode – attacker is reset to
-    STATE_EXTERNAL (kicked back to the start).  Both agents keep
-    collecting experience throughout the full episode.
-  • All rewards are normalised to a consistent ±20 scale so the
-    attacker's priv-esc signal no longer drowns everything else.
-  • 15 % benign noise kept, but normalised in the observation layer.
-  • Curriculum levels (0-2) gate action complexity and noise,
-    letting agents learn basics before full self-play.
-  • POMDP observations are now L∞-normalised per-perspective so the
-    LSTM sees values in roughly [0, 1] rather than raw counts.
-  • Rich info dict returned on every step for the evaluator.
+Two-agent shared environment: one instance trains either the attacker or
+the defender (mode=...) while the opponent acts inside step() via an
+injected policy.
+
+v3.0 changes:
+  • Fully seeded — every random draw goes through self.np_random, so
+    reset(seed=...) makes trajectories reproducible. SB3 propagates
+    per-worker seeds (seed+rank) automatically.
+  • StatefulOpponent threads LSTM state across steps within an episode
+    (RL opponents previously acted memoryless during training).
+  • Hot-swap API for persistent worker pools: set_scripted_opponent(),
+    load_rl_opponent(), set_curriculum_level() — all callable through
+    VecEnv.env_method() without rebuilding subprocesses.
+  • All reward coefficients live in RewardConfig (defaults = previous
+    hardcoded values, with the game-design fixes below).
+  • Win conditions are exclusive: attacker wins on sustained ROOT;
+    defender wins only via a JUSTIFIED block recorded at block time
+    (alert-only detection no longer auto-wins).
+  • Rate limiting persists for rate_limit_duration steps and is no
+    longer cleared by an unrelated block.
+  • Post-cap exfiltration penalty raised so EV(priv-esc) strictly
+    dominates exfil spam.
+
+Action masking note: sb3-contrib's RecurrentPPO has no invalid-action
+masking support, so curriculum gating remaps out-of-mask actions to
+wait/monitor (action 9) instead of masking logits.
 """
 
+import logging
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
+
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
-import random
-from typing import Optional, Tuple, Dict, Any
+from gymnasium import spaces
+
+logger = logging.getLogger(__name__)
 
 # ── Kill-chain states ──────────────────────────────────────────────────────────
-STATE_EXTERNAL   = 0   # Not yet inside the target network
-STATE_USER_ACCESS  = 1   # Low-privilege foothold
-STATE_ROOT_ACCESS  = 2   # Full compromise
+STATE_EXTERNAL    = 0   # Not yet inside the target network
+STATE_USER_ACCESS = 1   # Low-privilege foothold
+STATE_ROOT_ACCESS = 2   # Full compromise
+
+# ── Action names (used by the demo stream and telemetry adapter) ──────────────
+ATT_ACTION_NAMES = [
+    "brute_force_ssh", "enumerate", "recon", "exfiltrate_data",
+    "privilege_escalation", "create_backdoor", "modify_files",
+    "full_exfil_dump", "lateral_movement", "wait",
+]
+DEF_ACTION_NAMES = [
+    "monitor", "rate_limit", "temp_block", "hard_block",
+    "deploy_decoy", "rotate_config", "trigger_alert", "isolate_segment",
+    "full_reset", "active_deception",
+]
 
 # ── Curriculum levels ─────────────────────────────────────────────────────────
 #   Level 0  →  restricted action sets, no noise, scripted opponent
@@ -32,20 +62,160 @@ STATE_ROOT_ACCESS  = 2   # Full compromise
 #   Level 2  →  full action sets, realistic noise, self-play
 CURRICULUM_CONFIG = {
     # Level 0: minimal actions so agents learn the core loop first.
-    #   Attacker gets brute-force (0), priv-esc (4), exfil (3), and wait (9).
-    #   WITHOUT action 4, attacker can NEVER reach ROOT → nobody ever wins →
-    #   all episodes truncate → win rates stay 0% forever.  This was the
-    #   primary bug causing flat results in the first smoke test.
-    #   Defender gets monitor (0), rate-limit (1), temp-block (2),
-    #   decoy (4), alert (6 – needed for first_detection_step), wait (9).
+    #   Attacker keeps brute-force (0), exfil (3), priv-esc (4), wait (9) —
+    #   without priv-esc the attacker can never reach ROOT and win rates
+    #   stay 0% forever. Defender keeps monitor/rate-limit/temp-block/
+    #   decoy/alert/wait.
     0: {"noise_rate": 0.00, "max_steps": 75,
         "att_mask": [0, 3, 4, 9],
         "def_mask": [0, 1, 2, 4, 6, 9]},
-    # Level 1: full actions, low noise.
-    1: {"noise_rate": 0.08, "max_steps": 75,  "att_mask": list(range(10)),  "def_mask": list(range(10))},
-    # Level 2: full actions, realistic noise, self-play.
-    2: {"noise_rate": 0.15, "max_steps": 100, "att_mask": list(range(10)),  "def_mask": list(range(10))},
+    1: {"noise_rate": 0.08, "max_steps": 75,
+        "att_mask": list(range(10)), "def_mask": list(range(10))},
+    2: {"noise_rate": 0.15, "max_steps": 100,
+        "att_mask": list(range(10)), "def_mask": list(range(10))},
 }
+
+
+# ── Reward configuration ───────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class RewardConfig:
+    """All reward/probability coefficients. Defaults preserve the tuned v2
+    values except where annotated as a v3 game-design fix.
+
+    Design principles (±20 scale):
+      • Small rewards for correct conservative play (+0.5)
+      • Moderate rewards for correct active responses (+5 to +10)
+      • Large rewards only for decisive outcomes (+15 to +25)
+      • Penalties smaller than the corresponding correct-play reward
+    """
+
+    # ── Defender action rewards ──
+    monitor_quiet:          float = 0.5
+    monitor_while_breached: float = -0.3
+    rate_limit_hit:         float = 4.0
+    rate_limit_fp:          float = -1.0
+    rate_limit_duration:    int   = 3      # v3: persists N steps, not cleared by blocks
+    temp_block_hit:         float = 10.0
+    temp_block_fp:          float = -3.0
+    hard_block_hit:         float = 15.0
+    hard_block_fp:          float = -5.0
+    decoy_deploy:           float = 2.0
+    decoy_after_cap:        float = 0.5
+    decoy_cap:              int   = 5
+    rotate_hit:             float = 8.0
+    rotate_fp:              float = -1.0
+    alert_hit:              float = 5.0
+    alert_spam:             float = -3.0
+    alert_fp:               float = -2.0
+    alert_cap:              int   = 2
+    isolate_hit:            float = 18.0
+    isolate_fp:             float = -6.0
+    full_reset_cost:        float = -4.0
+    deception_with_decoys:  float = 3.0
+    deception_no_decoys:    float = 0.5
+    deception_after_cap:    float = 0.1
+    deception_cap:          int   = 3
+    decoy_passive_per_step: float = 0.1
+    block_spam_pen:         float = -10.0
+    block_spam_cap:         int   = 5
+    missed_escalation_pen:  float = -8.0
+    immediate_detect_bonus: float = 3.0
+
+    # ── Attacker action rewards ──
+    rate_limited_fail:      float = -1.0
+    rate_limited_prob:      float = 0.45
+    brute_success:          float = 12.0
+    brute_fail:             float = -0.5
+    brute_inside_pen:       float = -2.0
+    brute_base_prob:        float = 0.35
+    brute_min_prob:         float = 0.15
+    brute_prob_decay:       float = 0.01   # per failed login
+    enum_base:              float = 4.0
+    enum_min:               float = 1.0
+    recon_reward:           float = 3.0
+    exfil_reward:           float = 10.0
+    exfil_cap:              int   = 3
+    exfil_after_cap:        float = -2.0   # v3 fix: was -1.0; EV(priv-esc) now strictly dominates
+    exfil_wrong_state:      float = -3.0
+    privesc_success:        float = 25.0
+    privesc_fail:           float = -1.0
+    privesc_wrong_state:    float = -4.0
+    privesc_base_prob:      float = 0.40
+    privesc_min_prob:       float = 0.10
+    privesc_decoy_decay:    float = 0.05   # per deployed decoy
+    backdoor_reward:        float = 14.0
+    modify_reward:          float = 10.0
+    dump_reward:            float = 18.0
+    root_wrong_state:       float = -4.0
+    lateral_reward:         float = 6.0
+    wrong_state_pen:        float = -2.0
+    wait_pen:               float = -0.2
+    blocked_pen:            float = -5.0
+    decoy_penalty_rate:     float = 0.5    # attacker reward loss per deployed decoy
+
+    # ── Survival shaping ──
+    stuck_external_base:    float = 0.3
+    stuck_external_rate:    float = 0.02
+    stuck_external_max:     float = 0.5
+    survival_user:          float = 0.5
+    survival_root:          float = 2.0
+
+
+DEFAULT_REWARDS = RewardConfig()
+
+
+# ── Shared observation builder (also used by telemetry_adapter.py) ────────────
+
+def defender_observation(
+    failed_logins:     float,
+    suspicious_events: float,
+    is_blocked:        bool,
+    step_fraction:     float,
+    files_downloaded:  float,
+    is_rate_limited:   bool,
+    decoys_deployed:   float,
+    alerts_triggered:  float,
+) -> np.ndarray:
+    """8-dim L∞-normalized defender observation. Single source of truth for
+    the layout — the live telemetry adapter builds the same vector from
+    real Elasticsearch events."""
+    raw = np.array([
+        failed_logins / 50.0,
+        suspicious_events / 30.0,
+        float(is_blocked),
+        step_fraction,
+        files_downloaded / 20.0,
+        float(is_rate_limited),
+        decoys_deployed / 5.0,
+        alerts_triggered / 10.0,
+    ], dtype=np.float32)
+    return np.clip(raw, 0.0, 1.0)
+
+
+# ── Stateful opponent wrapper ──────────────────────────────────────────────────
+
+class StatefulOpponent:
+    """Wraps an SB3 recurrent model so its LSTM hidden state persists across
+    steps within an episode. The env calls .reset() at episode boundaries.
+
+    Without this, every opponent_model.predict(obs) call starts from a zero
+    LSTM state — the opponent plays memoryless and self-play quality drops.
+    """
+
+    def __init__(self, model):
+        self._model = model
+        self._state = None
+
+    def predict(self, obs: np.ndarray, deterministic: bool = True):
+        obs_arr = np.asarray(obs, dtype=np.float32).reshape(1, -1)
+        action, self._state = self._model.predict(
+            obs_arr, state=self._state, deterministic=deterministic
+        )
+        return int(np.asarray(action).flat[0]), None
+
+    def reset(self) -> None:
+        self._state = None
 
 
 class SharedHoneypotEnv(gym.Env):
@@ -59,10 +229,12 @@ class SharedHoneypotEnv(gym.Env):
     max_steps : int
         Overrides curriculum default when set explicitly.
     opponent_model : object with .predict(obs) -> (action, _)
-        The current opponent.  None → random policy.
+        The current opponent. None → seeded random policy over the
+        opponent's curriculum mask. May expose .reset() for episode
+        boundaries (StatefulOpponent does).
     curriculum_level : int  0 | 1 | 2
-        Difficulty gate.  Passed in by the Trainer and incremented
-        as agents improve.
+    rewards : RewardConfig
+        Reward coefficients; defaults to DEFAULT_REWARDS.
     """
 
     metadata = {"render.modes": ["human"]}
@@ -73,18 +245,18 @@ class SharedHoneypotEnv(gym.Env):
         max_steps: Optional[int] = None,
         opponent_model=None,
         curriculum_level: int = 2,
+        rewards: RewardConfig = DEFAULT_REWARDS,
     ):
         super().__init__()
         assert mode in ("attacker", "defender"), f"Invalid mode: {mode}"
         self.mode = mode
         self.opponent_model = opponent_model
-        self.curriculum_level = min(max(curriculum_level, 0), 2)
+        self._opponent_id = type(opponent_model).__name__ if opponent_model else "random"
+        self.rw = rewards
+        self._max_steps_override = max_steps
 
-        cfg = CURRICULUM_CONFIG[self.curriculum_level]
-        self.max_steps = max_steps if max_steps is not None else cfg["max_steps"]
-        self.noise_rate = cfg["noise_rate"]
-        self._att_mask = cfg["att_mask"]
-        self._def_mask = cfg["def_mask"]
+        self.curriculum_level = min(max(curriculum_level, 0), 2)
+        self._apply_curriculum(self.curriculum_level)
 
         # Action / observation spaces (always full size; masking done inside step)
         self.action_space = spaces.Discrete(10)
@@ -92,7 +264,6 @@ class SharedHoneypotEnv(gym.Env):
             low=0.0, high=1.0, shape=(8,), dtype=np.float32
         )
 
-        # Episode counters / state – initialised in reset()
         self.current_step = 0
         self.true_state: Dict[str, Any] = {}
         self._reset_true_state()
@@ -100,8 +271,45 @@ class SharedHoneypotEnv(gym.Env):
         # Per-episode stat accumulators for the info dict
         self._ep_att_rewards: list = []
         self._ep_def_rewards: list = []
-        self._ep_att_actions: list = []
-        self._ep_def_actions: list = []
+
+    # ── Curriculum / opponent hot-swap (callable via VecEnv.env_method) ────────
+
+    def _apply_curriculum(self, level: int) -> None:
+        cfg = CURRICULUM_CONFIG[level]
+        self.max_steps = (self._max_steps_override
+                          if self._max_steps_override is not None
+                          else cfg["max_steps"])
+        self.noise_rate = cfg["noise_rate"]
+        self._att_mask = cfg["att_mask"]
+        self._def_mask = cfg["def_mask"]
+
+    def set_curriculum_level(self, level: int) -> int:
+        self.curriculum_level = min(max(level, 0), 2)
+        self._apply_curriculum(self.curriculum_level)
+        return self.curriculum_level
+
+    def set_scripted_opponent(self, name: str) -> str:
+        """Swap in a scripted opponent by registry name without rebuilding
+        the worker process. See baselines.OPPONENT_REGISTRY."""
+        from baselines import OPPONENT_REGISTRY
+        self.opponent_model = OPPONENT_REGISTRY[name]()
+        self._opponent_id = name
+        return name
+
+    def load_rl_opponent(self, path: str) -> bool:
+        """Load a frozen RL opponent from disk (CPU) inside this worker and
+        wrap it so its LSTM state persists within episodes."""
+        try:
+            from sb3_contrib import RecurrentPPO
+            model = RecurrentPPO.load(path, device="cpu")
+            self.opponent_model = StatefulOpponent(model)
+            self._opponent_id = f"rl:{path}"
+            return True
+        except Exception as e:
+            logger.warning("load_rl_opponent failed for %s: %s", path, e)
+            self.opponent_model = None
+            self._opponent_id = "random"
+            return False
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
@@ -110,7 +318,7 @@ class SharedHoneypotEnv(gym.Env):
             # Shared world state
             "kill_chain_level":   STATE_EXTERNAL,
             "is_blocked":         False,   # soft block – no longer terminal
-            "is_rate_limited":    False,
+            "rate_limit_steps":   0,       # v3: duration counter, not a bool
             "decoys_deployed":    0,
             "failed_logins":      0,
             "suspicious_events":  0,
@@ -122,22 +330,21 @@ class SharedHoneypotEnv(gym.Env):
             # Defender internal counters
             "false_positives":    0,
             "blocks_issued":      0,
+            "justified_blocks":   0,       # v3: recorded at block time
             "active_deception_count": 0,
             # For time-to-detect reward shaping
             "first_detection_step": None,
         }
 
     def _apply_curriculum_mask(self, action: int, is_attacker: bool) -> int:
-        """Remap out-of-curriculum actions to a safe no-op."""
+        """Remap out-of-curriculum actions to a safe no-op (wait/monitor)."""
         mask = self._att_mask if is_attacker else self._def_mask
-        if action not in mask:
-            return 9  # wait / monitor
-        return action
+        return action if action in mask else 9
 
     def _get_opponent_action(self) -> int:
         if self.opponent_model is None:
             opp_mask = self._def_mask if self.mode == "attacker" else self._att_mask
-            return random.choice(opp_mask)
+            return int(self.np_random.choice(opp_mask))
         obs = self._get_raw_observation(is_opponent=True)
         result = self.opponent_model.predict(obs, deterministic=True)
         action = result[0] if isinstance(result, tuple) else result
@@ -146,10 +353,8 @@ class SharedHoneypotEnv(gym.Env):
     # ── Observation builders ───────────────────────────────────────────────────
 
     def _get_raw_observation(self, is_opponent: bool = False) -> np.ndarray:
-        """
-        Returns the POMDP observation for either the main agent or the opponent.
-        Each agent sees only its own slice of the world – not the other's.
-        """
+        """POMDP observation for either the main agent or the opponent.
+        Each agent sees only its own slice of the world."""
         perspective = self.mode
         if is_opponent:
             perspective = "defender" if self.mode == "attacker" else "attacker"
@@ -157,29 +362,24 @@ class SharedHoneypotEnv(gym.Env):
         ts = self.true_state
         if perspective == "attacker":
             raw = np.array([
-                float(ts["kill_chain_level"]),   # 0-2
-                float(self.current_step),         # 0-max_steps
-                float(ts["att_last_success"]),    # 0/1
-                float(ts["att_last_timeout"]),    # 0/1
+                ts["kill_chain_level"] / 2.0,
+                self.current_step / float(self.max_steps),
+                float(ts["att_last_success"]),
+                float(ts["att_last_timeout"]),
                 0.0, 0.0, 0.0, 0.0,
             ], dtype=np.float32)
-            # Normalise
-            divisors = np.array([2.0, float(self.max_steps), 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
-        else:
-            raw = np.array([
-                float(ts["failed_logins"]),       # noisy login count
-                float(ts["suspicious_events"]),   # cumulative IOC count
-                float(ts["is_blocked"]),           # soft block active?
-                float(self.current_step),          # time pressure
-                float(ts["files_downloaded"]),     # exfil indicator
-                float(ts["is_rate_limited"]),      # rate limit active?
-                float(ts["decoys_deployed"]),      # deception coverage
-                float(ts["alerts_triggered"]),     # escalation awareness
-            ], dtype=np.float32)
-            divisors = np.array([50.0, 30.0, 1.0, float(self.max_steps),
-                                 20.0, 1.0, 5.0, 10.0])
+            return np.clip(raw, 0.0, 1.0)
 
-        return np.clip(raw / np.maximum(divisors, 1e-6), 0.0, 1.0)
+        return defender_observation(
+            failed_logins     = ts["failed_logins"],
+            suspicious_events = ts["suspicious_events"],
+            is_blocked        = ts["is_blocked"],
+            step_fraction     = self.current_step / float(self.max_steps),
+            files_downloaded  = ts["files_downloaded"],
+            is_rate_limited   = ts["rate_limit_steps"] > 0,
+            decoys_deployed   = ts["decoys_deployed"],
+            alerts_triggered  = ts["alerts_triggered"],
+        )
 
     def _get_observation(self) -> np.ndarray:
         return self._get_raw_observation(is_opponent=False)
@@ -194,18 +394,23 @@ class SharedHoneypotEnv(gym.Env):
         self._reset_true_state()
         self._ep_att_rewards = []
         self._ep_def_rewards = []
-        self._ep_att_actions = []
-        self._ep_def_actions = []
+        # Episode boundary housekeeping for the opponent: re-seed its RNG from
+        # ours (keeps the full trajectory reproducible) and clear any
+        # per-episode state (LSTM memory, back-off counters).
+        if self.opponent_model is not None:
+            if hasattr(self.opponent_model, "seed"):
+                self.opponent_model.seed(int(self.np_random.integers(2**31)))
+            if hasattr(self.opponent_model, "reset"):
+                self.opponent_model.reset()
         return self._get_observation(), {"curriculum_level": self.curriculum_level}
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, dict]:
         self.current_step += 1
 
-        # ── Benign noise injection (curriculum-gated) ──────────────────────
-        if random.random() < self.noise_rate:
+        # Benign noise injection (curriculum-gated)
+        if self.np_random.random() < self.noise_rate:
             self.true_state["failed_logins"] += 1
 
-        # ── Determine both agents' actions ────────────────────────────────
         opp_action = self._get_opponent_action()
 
         if self.mode == "attacker":
@@ -215,49 +420,30 @@ class SharedHoneypotEnv(gym.Env):
             def_action = self._apply_curriculum_mask(action, is_attacker=False)
             att_action = self._apply_curriculum_mask(opp_action, is_attacker=True)
 
-        # ── Resolve the turn ───────────────────────────────────────────────
         att_r, def_r = self._resolve_turn(att_action, def_action)
 
         self._ep_att_rewards.append(att_r)
         self._ep_def_rewards.append(def_r)
-        self._ep_att_actions.append(att_action)
-        self._ep_def_actions.append(def_action)
 
-        # ── Termination (time only – not blocking) ─────────────────────────
-        truncated  = self.current_step >= self.max_steps
+        truncated = self.current_step >= self.max_steps
         # Natural terminal: attacker achieves full root compromise AND
-        # survives to end-of-episode (not immediately blocked).
-        # We do NOT end on block – the attacker just gets kicked back.
+        # survives (not immediately blocked). Blocking never ends the
+        # episode — the attacker is kicked back to EXTERNAL instead.
         terminated = (
             self.true_state["kill_chain_level"] == STATE_ROOT_ACCESS
             and not self.true_state["is_blocked"]
-            and self.current_step >= 10   # must survive at least 10 steps
+            and self.current_step >= 10
         )
 
         reward = att_r if self.mode == "attacker" else def_r
-
         info = self._build_info(att_action, def_action, att_r, def_r, terminated, truncated)
         return self._get_observation(), reward, terminated, truncated, info
 
     # ── Core game logic ────────────────────────────────────────────────────────
 
     def _resolve_turn(self, att_action: int, def_action: int) -> Tuple[float, float]:
-        """
-        Resolve one full turn.  All reward values are in the range ±20
-        so the LSTM value function can converge without one signal
-        dominating the gradient.
-
-        Reward design principles:
-          • Consistent small rewards for correct conservative play (+0.5)
-          • Moderate rewards for correct active responses (+5 to +10)
-          • Large rewards only for decisive outcomes (+15 to +20)
-          • Penalties are always smaller than the corresponding reward
-            (max penalty = 60 % of max reward for that action class)
-          • Blocking resets attacker to EXTERNAL – episode continues
-        """
         ts = self.true_state
-        att_r = 0.0
-        def_r = 0.0
+        rw = self.rw
 
         # Reset per-step POMDP flags
         ts["att_last_success"] = 0
@@ -265,240 +451,242 @@ class SharedHoneypotEnv(gym.Env):
 
         prev_kill_chain = ts["kill_chain_level"]
 
-        # ── Defender moves first (sets up the environment the attacker faces) ─
-        def_r += self._exec_defender_action(def_action)
+        # Defender moves first (sets up the environment the attacker faces)
+        def_r = self._exec_defender_action(def_action)
+        att_r = self._exec_attacker_action(att_action)
 
-        # ── Attacker acts against the environment defender just set up ────────
-        att_r += self._exec_attacker_action(att_action)
-
-        # ── Cross-agent consequence rewards ───────────────────────────────────
+        # Cross-agent consequences
         if ts["kill_chain_level"] > prev_kill_chain:
-            # Attacker escalated: defender penalised, attacker already rewarded
-            def_r -= 8.0
+            def_r += rw.missed_escalation_pen
 
         if ts["is_blocked"]:
-            # Soft block: attacker penalised, kill chain reset (not episode end)
-            att_r -= 5.0
+            # Soft block: attacker penalised, kill chain reset, episode continues.
+            # v3: rate limiting is NOT cleared here — it expires on its own.
+            att_r += rw.blocked_pen
             ts["kill_chain_level"] = STATE_EXTERNAL
-            ts["is_blocked"] = False          # reset for next turn
-            ts["is_rate_limited"] = False
+            ts["is_blocked"] = False
             ts["blocks_issued"] += 1
             ts["att_last_timeout"] = 1
             if ts["first_detection_step"] is None:
                 ts["first_detection_step"] = self.current_step
 
-        # Time-pressure bonus for defender: reward earlier detection more
+        # Rate limit expires after rate_limit_duration turns
+        if ts["rate_limit_steps"] > 0:
+            ts["rate_limit_steps"] -= 1
+
+        # Time-pressure bonus for the defender: detecting immediately pays
         if ts["first_detection_step"] is not None:
-            steps_elapsed = self.current_step - ts["first_detection_step"]
-            if steps_elapsed == 0:
-                def_r += 3.0  # immediate detection bonus (applied once)
+            if self.current_step - ts["first_detection_step"] == 0:
+                def_r += rw.immediate_detect_bonus
 
         return att_r, def_r
 
+    def _record_block(self) -> None:
+        """A block fires. It only counts toward the win condition when it was
+        justified by attacker-driven evidence at block time — benign noise
+        (failed logins) alone is not justification."""
+        ts = self.true_state
+        ts["is_blocked"] = True
+        if ts["suspicious_events"] >= 2 or ts["kill_chain_level"] > STATE_EXTERNAL:
+            ts["justified_blocks"] += 1
+
     def _exec_defender_action(self, action: int) -> float:
         ts = self.true_state
+        rw = self.rw
         r = 0.0
 
         if action == 0:
-            # Monitor only – small sustained reward for not over-reacting.
-            # BUT: if the attacker is already inside, passive monitoring is
-            # bad and should be penalised lightly to prevent policy collapse
-            # to "always monitor regardless of state".
+            # Monitor — correct when quiet, lightly penalised when breached
+            # (prevents collapse to "always monitor").
             if ts["kill_chain_level"] > STATE_EXTERNAL:
-                r -= 0.3   # inaction penalty when threat is active
+                r += rw.monitor_while_breached
             else:
-                r += 0.5   # correct conservative play when all is quiet
+                r += rw.monitor_quiet
 
         elif action == 1:
             # Rate limit – justified if ≥2 suspicious events
             if ts["suspicious_events"] >= 2 or ts["failed_logins"] >= 3:
-                ts["is_rate_limited"] = True
-                r += 4.0
+                ts["rate_limit_steps"] = rw.rate_limit_duration
+                r += rw.rate_limit_hit
             else:
                 ts["false_positives"] += 1
-                r -= 1.0
+                r += rw.rate_limit_fp
 
         elif action == 2:
             # Temporary block – justified if ≥3 suspicious events
             if ts["suspicious_events"] >= 3 or ts["failed_logins"] >= 5:
-                ts["is_blocked"] = True   # triggers reset in _resolve_turn
-                r += 10.0
+                self._record_block()
+                r += rw.temp_block_hit
             else:
                 ts["false_positives"] += 1
-                r -= 3.0
+                r += rw.temp_block_fp
 
         elif action == 3:
             # Hard block – justified if ≥5 suspicious events or files stolen
             if ts["suspicious_events"] >= 5 or ts["files_downloaded"] > 0:
-                ts["is_blocked"] = True
-                r += 15.0
+                self._record_block()
+                r += rw.hard_block_hit
             else:
                 ts["false_positives"] += 1
-                r -= 5.0
+                r += rw.hard_block_fp
 
         elif action == 4:
-            # Deploy honeypot decoy – passive reward per decoy per step
-            if ts["decoys_deployed"] < 5:
+            # Deploy honeypot decoy – diminishing returns past the cap
+            if ts["decoys_deployed"] < rw.decoy_cap:
                 ts["decoys_deployed"] += 1
-                r += 2.0
+                r += rw.decoy_deploy
             else:
-                r += 0.5  # diminishing returns
+                r += rw.decoy_after_cap
 
         elif action == 5:
             # Rotate honeypot config – useful mid-intrusion
             if ts["kill_chain_level"] > STATE_EXTERNAL:
                 ts["kill_chain_level"] = max(STATE_EXTERNAL, ts["kill_chain_level"] - 1)
-                r += 8.0
+                r += rw.rotate_hit
             else:
-                r -= 1.0   # wasteful if no intruder
+                r += rw.rotate_fp
 
         elif action == 6:
-            # Trigger alert — capped at 2 per episode.
-            # Beyond that it becomes noise and actively penalises.
+            # Trigger alert — capped per episode, spam penalised
             if ts["suspicious_events"] >= 2:
                 ts["alerts_triggered"] += 1
                 if ts["first_detection_step"] is None:
                     ts["first_detection_step"] = self.current_step
-                if ts["alerts_triggered"] <= 2:
-                    r += 5.0
-                else:
-                    r -= 3.0   # spam penalty
+                r += rw.alert_hit if ts["alerts_triggered"] <= rw.alert_cap else rw.alert_spam
             else:
                 ts["false_positives"] += 1
-                r -= 2.0
+                r += rw.alert_fp
 
         elif action == 7:
             # Isolate segment – high-value move if attacker is inside
             if ts["kill_chain_level"] > STATE_EXTERNAL:
-                ts["is_blocked"] = True
-                r += 18.0
+                self._record_block()
+                r += rw.isolate_hit
             else:
                 ts["false_positives"] += 1
-                r -= 6.0
+                r += rw.isolate_fp
 
         elif action == 8:
             # Full reset – very costly; last resort only
             self._reset_true_state()
-            r -= 4.0
+            r += rw.full_reset_cost
 
         elif action == 9:
-            # Active deception (honeytokens) — reward if decoys present.
-            # Capped at 3 per episode to prevent spam equilibrium.
-            active_deception_count = ts.get("active_deception_count", 0)
-            ts["active_deception_count"] = active_deception_count + 1
-            if active_deception_count < 3:
-                if ts["decoys_deployed"] > 0:
-                    r += 3.0
-                else:
-                    r += 0.5
+            # Active deception (honeytokens) — capped per episode
+            count = ts["active_deception_count"]
+            ts["active_deception_count"] = count + 1
+            if count < rw.deception_cap:
+                r += (rw.deception_with_decoys if ts["decoys_deployed"] > 0
+                      else rw.deception_no_decoys)
             else:
-                r += 0.1   # minimal reward after cap
+                r += rw.deception_after_cap
 
-        # Small passive reward per decoy per step (encouraging setup)
-        r += ts["decoys_deployed"] * 0.1
+        # Small passive reward per decoy per step (encourages setup)
+        r += ts["decoys_deployed"] * rw.decoy_passive_per_step
 
-        # Block frequency cap: after 5 blocks in one episode the defender is
-        # clearly spamming. Each block beyond 5 costs -10.0.
-        # This directly fixes the FP=56/episode behaviour observed at iter 4
-        # where the defender learned to block every step unconditionally.
-        if ts["blocks_issued"] > 5:
-            r -= 10.0
+        # Block frequency cap: blocking every step is spam, not defense
+        if ts["blocks_issued"] > rw.block_spam_cap:
+            r += rw.block_spam_pen
 
         return r
 
     def _exec_attacker_action(self, action: int) -> float:
         ts = self.true_state
+        rw = self.rw
+        rng = self.np_random
         r = 0.0
         cur = ts["kill_chain_level"]
 
-        # Rate limiting reduces attacker action success probability
-        rate_limited = ts["is_rate_limited"] and random.random() < 0.45
-        if rate_limited:
+        # Rate limiting makes attacker actions fail probabilistically
+        if ts["rate_limit_steps"] > 0 and rng.random() < rw.rate_limited_prob:
             ts["att_last_timeout"] = 1
-            return -1.0   # action fails silently
+            return rw.rate_limited_fail
 
-        # Decoy penalty multiplier (attacker wastes time on fake assets)
-        decoy_penalty = ts["decoys_deployed"] * 0.5
+        # Decoys waste the attacker's time on fake assets
+        decoy_penalty = ts["decoys_deployed"] * rw.decoy_penalty_rate
 
         if action == 0:
             # Brute-force SSH (only useful from EXTERNAL)
             if cur == STATE_EXTERNAL:
-                success_prob = max(0.15, 0.35 - ts["failed_logins"] * 0.01)
-                if random.random() < success_prob:
+                success_prob = max(
+                    rw.brute_min_prob,
+                    rw.brute_base_prob - ts["failed_logins"] * rw.brute_prob_decay,
+                )
+                if rng.random() < success_prob:
                     ts["kill_chain_level"] = STATE_USER_ACCESS
                     ts["suspicious_events"] += 1
                     ts["att_last_success"] = 1
-                    r += 12.0
+                    r += rw.brute_success
                 else:
                     ts["failed_logins"] += 1
-                    r -= 0.5
+                    r += rw.brute_fail
             else:
-                r -= 2.0  # already inside – brute force is pointless
+                r += rw.brute_inside_pen
 
         elif action == 1:
-            # Enumerate users / services (useful at USER+ level)
+            # Enumerate users / services (USER+)
             if cur >= STATE_USER_ACCESS:
-                r += max(1.0, 4.0 - decoy_penalty)
+                r += max(rw.enum_min, rw.enum_base - decoy_penalty)
                 ts["suspicious_events"] += 1
                 ts["att_last_success"] = 1
             else:
-                r -= 2.0
+                r += rw.wrong_state_pen
 
         elif action == 2:
-            # Recon commands (whoami, uname, ls)
+            # Recon commands (USER+)
             if cur >= STATE_USER_ACCESS:
-                r += 3.0
+                r += rw.recon_reward
                 ts["suspicious_events"] += 1
                 ts["att_last_success"] = 1
             else:
-                r -= 2.0
+                r += rw.wrong_state_pen
 
         elif action == 3:
-            # Exfiltrate data. Capped at 3 — after that actively penalises
-            # to make priv-esc strictly better than continued exfil spam.
+            # Exfiltrate data — capped; after the cap it actively penalises
+            # so priv-esc is strictly better than exfil spam.
             if cur >= STATE_USER_ACCESS:
                 ts["files_downloaded"] += 1
                 ts["suspicious_events"] += 2
                 ts["att_last_success"] = 1
-                if ts["files_downloaded"] <= 3:
-                    r += 10.0
-                else:
-                    r -= 1.0   # negative after cap forces escalation
+                r += (rw.exfil_reward if ts["files_downloaded"] <= rw.exfil_cap
+                      else rw.exfil_after_cap)
             else:
-                r -= 3.0
+                r += rw.exfil_wrong_state
 
         elif action == 4:
-            # Privilege escalation (USER → ROOT). Raised to 25 so expected
-            # value (40% × 25 = 10) clearly beats post-cap exfil (−1).
+            # Privilege escalation (USER → ROOT)
             if cur == STATE_USER_ACCESS:
-                success_prob = 0.40 - decoy_penalty * 0.05
-                if random.random() < max(0.10, success_prob):
+                success_prob = max(
+                    rw.privesc_min_prob,
+                    rw.privesc_base_prob - decoy_penalty * rw.privesc_decoy_decay,
+                )
+                if rng.random() < success_prob:
                     ts["kill_chain_level"] = STATE_ROOT_ACCESS
                     ts["suspicious_events"] += 3
                     ts["att_last_success"] = 1
-                    r += 25.0
+                    r += rw.privesc_success
                 else:
-                    r -= 1.0
+                    r += rw.privesc_fail
             else:
-                r -= 4.0
+                r += rw.privesc_wrong_state
 
         elif action == 5:
             # Create backdoor (ROOT only)
             if cur == STATE_ROOT_ACCESS:
                 ts["suspicious_events"] += 2
                 ts["att_last_success"] = 1
-                r += 14.0
+                r += rw.backdoor_reward
             else:
-                r -= 4.0
+                r += rw.root_wrong_state
 
         elif action == 6:
             # Modify system files (ROOT only)
             if cur == STATE_ROOT_ACCESS:
                 ts["suspicious_events"] += 2
                 ts["att_last_success"] = 1
-                r += 10.0
+                r += rw.modify_reward
             else:
-                r -= 4.0
+                r += rw.root_wrong_state
 
         elif action == 7:
             # Full exfil dump (ROOT only)
@@ -506,35 +694,36 @@ class SharedHoneypotEnv(gym.Env):
                 ts["files_downloaded"] += 3
                 ts["suspicious_events"] += 3
                 ts["att_last_success"] = 1
-                r += 18.0
+                r += rw.dump_reward
             else:
-                r -= 4.0
+                r += rw.root_wrong_state
 
         elif action == 8:
-            # Lateral movement / internal port scan
+            # Lateral movement / internal port scan (USER+)
             if cur >= STATE_USER_ACCESS:
                 ts["suspicious_events"] += 2
                 ts["att_last_success"] = 1
-                r += 6.0
+                r += rw.lateral_reward
             else:
-                r -= 2.0
+                r += rw.wrong_state_pen
 
         elif action == 9:
             # Wait / observe (always valid, tiny cost)
-            r -= 0.2
+            r += rw.wait_pen
             ts["att_last_success"] = 1   # not failing = success by definition
 
-        # Survival / time-pressure rewards.
+        # Survival / time-pressure shaping
         if ts["kill_chain_level"] == STATE_EXTERNAL:
             steps_stuck = max(0, self.current_step - 5)
-            r -= 0.3 + min(0.5, steps_stuck * 0.02)
+            r -= rw.stuck_external_base + min(
+                rw.stuck_external_max, steps_stuck * rw.stuck_external_rate
+            )
         elif ts["kill_chain_level"] == STATE_USER_ACCESS:
-            r += 0.5
+            r += rw.survival_user
         elif ts["kill_chain_level"] == STATE_ROOT_ACCESS:
-            # ROOT bonus is substantially higher than USER so the attacker
-            # prefers escalating over staying at USER and spamming exfiltrate.
-            # +2.0/step at ROOT vs +0.5 at USER = strong incentive to escalate.
-            r += 2.0
+            # ROOT pays substantially more per step than USER so the attacker
+            # prefers escalating over camping at USER.
+            r += rw.survival_root
 
         return r
 
@@ -550,7 +739,6 @@ class SharedHoneypotEnv(gym.Env):
         truncated: bool,
     ) -> dict:
         ts = self.true_state
-        done = terminated or truncated
         info: Dict[str, Any] = {
             "step":              self.current_step,
             "curriculum_level":  self.curriculum_level,
@@ -563,43 +751,28 @@ class SharedHoneypotEnv(gym.Env):
             "def_action":        def_action,
             "att_step_reward":   att_r,
             "def_step_reward":   def_r,
+            "opponent_id":       self._opponent_id,
         }
-        if done:
-            ts = self.true_state
-            # Attacker wins only if they reached ROOT and survived (not immediately blocked)
+        if terminated or truncated:
+            # Exclusive win conditions (v3):
+            #   Attacker wins by reaching ROOT and surviving.
+            #   Defender wins ONLY via a justified block (recorded at block
+            #   time) — alerts alone are detection, not containment.
             att_win = terminated and (ts["kill_chain_level"] == STATE_ROOT_ACCESS)
-
-            # Defender win requires a JUSTIFIED block — at least 2 suspicious events
-            # must have occurred before the block.  This prevents the degenerate
-            # "block everything at step 1" strategy from counting as a win.
-            justified_block = (
-                ts["blocks_issued"] > 0
-                and ts["suspicious_events"] >= 2
-            )
-            detected = ts["first_detection_step"] is not None
-            def_win = justified_block or detected
+            def_win = (not att_win) and ts["justified_blocks"] >= 1
 
             info.update({
-                "ep_att_return":       sum(self._ep_att_rewards),
-                "ep_def_return":       sum(self._ep_def_rewards),
-                "attacker_win":        att_win,
-                "defender_win":        def_win,
+                "ep_att_return":        sum(self._ep_att_rewards),
+                "ep_def_return":        sum(self._ep_def_rewards),
+                "attacker_win":         att_win,
+                "defender_win":         def_win,
                 "first_detection_step": ts["first_detection_step"],
-                "false_positives":     ts["false_positives"],
-                "blocks_issued":       ts["blocks_issued"],
-                "alerts_triggered":    ts["alerts_triggered"],
+                "false_positives":      ts["false_positives"],
+                "blocks_issued":        ts["blocks_issued"],
+                "justified_blocks":     ts["justified_blocks"],
+                "alerts_triggered":     ts["alerts_triggered"],
             })
         return info
-
-    # ── Curriculum update (called externally by Trainer) ──────────────────────
-
-    def set_curriculum_level(self, level: int) -> None:
-        self.curriculum_level = min(max(level, 0), 2)
-        cfg = CURRICULUM_CONFIG[self.curriculum_level]
-        self.max_steps   = cfg["max_steps"]
-        self.noise_rate  = cfg["noise_rate"]
-        self._att_mask   = cfg["att_mask"]
-        self._def_mask   = cfg["def_mask"]
 
     def render(self, mode: str = "human") -> None:
         ts = self.true_state
@@ -611,5 +784,5 @@ class SharedHoneypotEnv(gym.Env):
             f"FailedLogins={ts['failed_logins']} | "
             f"Files={ts['files_downloaded']} | "
             f"Decoys={ts['decoys_deployed']} | "
-            f"RateLimit={ts['is_rate_limited']}"
+            f"RateLimit={ts['rate_limit_steps'] > 0}"
         )
