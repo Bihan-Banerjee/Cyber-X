@@ -30,6 +30,39 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
+def _supervise(argv: list, max_restarts: int) -> int:
+    """Run training in a child process; relaunch with --resume on crashes.
+
+    Only the child handles Ctrl+C (graceful pause → exit 0); the
+    supervisor ignores SIGINT so it doesn't die mid-handoff and doesn't
+    restart a deliberately paused run.
+    """
+    import signal
+    import subprocess
+    import time
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    base_cmd = [sys.executable, os.path.abspath(__file__)] + argv + ["--worker"]
+    attempt = 0
+    while True:
+        cmd = list(base_cmd)
+        if attempt > 0 and "--resume" not in cmd:
+            cmd.append("--resume")
+        code = subprocess.call(cmd)
+        if code == 0:
+            return 0
+        attempt += 1
+        if attempt > max_restarts:
+            print(f"\n  Training crashed {attempt} times (exit {code}) — "
+                  f"giving up. Resume manually with --resume.")
+            return code
+        print(f"\n  Training crashed (exit {code}). "
+              f"Restarting with --resume in 15s "
+              f"(attempt {attempt}/{max_restarts})...\n")
+        time.sleep(15)   # give the GPU driver a moment to recover
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="CyberX MARL Training System",
@@ -54,7 +87,23 @@ def main():
     parser.add_argument("--resume",        action="store_true")
     parser.add_argument("--no-parallel",   action="store_true",
         help="Disable SubprocVecEnv (fallback to DummyVecEnv)")
+    parser.add_argument("--max-restarts",  type=int, default=3,
+        help="Auto-restart (with --resume) this many times if training "
+             "crashes, e.g. on sporadic cuDNN/driver errors (default: 3)")
+    parser.add_argument("--no-auto-restart", action="store_true",
+        help="Disable the crash-restart supervisor")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    # ── Crash-restart supervisor ───────────────────────────────────────────
+    # Sporadic CUDA/cuDNN errors (driver resets, TDR, thermal events on
+    # laptop GPUs) can kill an overnight run hours in. State is saved after
+    # every iteration, so the cheapest robust recovery is a fresh process
+    # (fresh CUDA context) resuming from the last completed iteration.
+    # The actual training runs in a child process; this parent only watches
+    # the exit code. Exit 0 (completion or Ctrl+C pause) ends the loop.
+    if not args.worker and not args.no_auto_restart:
+        sys.exit(_supervise(sys.argv[1:], args.max_restarts))
 
     from config_loader import get_config
     cfg = get_config()

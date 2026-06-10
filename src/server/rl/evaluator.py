@@ -42,6 +42,47 @@ except ImportError:
     logger.warning("matplotlib not installed – plotting disabled")
 
 
+def _cpu_eval_clone(agent):
+    """Predict-only CPU copy of an RL agent for evaluation threads.
+
+    RecurrentPPO.predict just delegates to policy.predict (same signature),
+    so a fresh policy exposed as `.model` satisfies everything _run_match
+    and StatefulOpponent need — without ever moving or sharing the live
+    training model.
+
+    The clone is rebuilt from the policy's constructor parameters + a CPU
+    state_dict copy. deepcopy is NOT usable here: on CUDA models the
+    cuDNN-flattened LSTM weights are non-leaf tensors and deepcopy raises.
+    sb3-contrib's RecurrentActorCriticPolicy does not include its LSTM
+    kwargs in _get_constructor_parameters, so they are merged in explicitly
+    from the live module.
+    """
+    import inspect
+    from types import SimpleNamespace
+
+    policy = agent.model.policy
+    params = policy._get_constructor_parameters()
+
+    accepted = inspect.signature(type(policy).__init__).parameters
+    lstm = policy.lstm_actor
+    for key, value in (
+        ("lstm_hidden_size",   lstm.hidden_size),
+        ("n_lstm_layers",      lstm.num_layers),
+        ("shared_lstm",        getattr(policy, "shared_lstm", False)),
+        ("enable_critic_lstm", getattr(policy, "enable_critic_lstm", True)),
+        ("lstm_kwargs",        getattr(policy, "lstm_kwargs", None)),
+    ):
+        if key in accepted and key not in params:
+            params[key] = value
+
+    clone = type(policy)(**params)   # modules are created on CPU
+    clone.load_state_dict(
+        {k: v.detach().cpu() for k, v in policy.state_dict().items()}
+    )
+    clone.set_training_mode(False)
+    return SimpleNamespace(model=clone)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #   ELO RATING SYSTEM
 # ══════════════════════════════════════════════════════════════════════════════
@@ -203,9 +244,12 @@ class MARLEvaluator:
         Run a full evaluation suite, running all matches in parallel
         using a thread pool with CPU inference.
 
-        CPU inference avoids CUDA thread-safety issues. For a 256-dim LSTM
-        over 25 episodes, CPU inference adds ~2ms/step overhead but the
-        parallel speedup (3-4× vs sequential) more than compensates.
+        Eval runs on predict-only CPU CLONES of the policies. The live
+        training models are never migrated or shared with eval threads:
+        repeatedly moving cuDNN LSTM modules CUDA→CPU→CUDA (the old
+        approach) forces their flattened weight buffers to be re-laid-out
+        every iteration and has been observed to destabilize the cuDNN
+        backward pass (CUDNN_STATUS_INTERNAL_ERROR mid-training).
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -219,21 +263,15 @@ class MARLEvaluator:
             "n_episodes":      n_episodes,
         }
 
-        # ── Move models to CPU for thread-safe parallel inference ──────────
-        # Each thread runs its own episode loop independently.  CUDA is not
-        # thread-safe for concurrent forward passes on the same tensor.
-        import torch
-        att_device = next(attacker.model.policy.parameters()).device
-        def_device = next(defender.model.policy.parameters()).device
-        attacker.model.policy.to("cpu")
-        defender.model.policy.to("cpu")
+        eval_attacker = _cpu_eval_clone(attacker)
+        eval_defender = _cpu_eval_clone(defender)
 
         # ── Build the full match list ──────────────────────────────────────
-        match_list = [("main", attacker, defender)]
+        match_list = [("main", eval_attacker, eval_defender)]
         for bname, bdef in baselines_def.items():
-            match_list.append((f"att_{bname}", attacker, bdef))
+            match_list.append((f"att_{bname}", eval_attacker, bdef))
         for bname, batt in baselines_att.items():
-            match_list.append((f"def_{bname}", batt, defender))
+            match_list.append((f"def_{bname}", batt, eval_defender))
 
         results: Dict[str, Any] = {}
 
@@ -262,10 +300,6 @@ class MARLEvaluator:
                                       "ttd_rate": 0, "mean_false_positives": 0,
                                       "kc_depth_dist": {"external":0,"user_access":0,"root_access":0},
                                       "att_action_counts": {}, "def_action_counts": {}}
-
-        # ── Restore models to original device ─────────────────────────────
-        attacker.model.policy.to(att_device)
-        defender.model.policy.to(def_device)
 
         # ── Assemble metrics ───────────────────────────────────────────────
         main = results["main"]

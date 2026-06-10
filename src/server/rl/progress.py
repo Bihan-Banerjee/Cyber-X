@@ -115,6 +115,10 @@ class CyberXProgressCallback(BaseCallback):
     # ── SB3 hooks ──────────────────────────────────────────────────────────────
 
     def _on_training_start(self) -> None:
+        # num_timesteps is cumulative across iterations (the trainer calls
+        # learn() with reset_num_timesteps=False); the bar tracks only THIS
+        # iteration's progress relative to the count at training start.
+        self._start_steps = self.num_timesteps
         if not HAS_TQDM:
             return
         colour = "red" if self.role == "attacker" else "blue"
@@ -135,7 +139,7 @@ class CyberXProgressCallback(BaseCallback):
         self._last_step = 0
 
     def _on_step(self) -> bool:
-        steps_done = self.num_timesteps
+        steps_done = self.num_timesteps - getattr(self, "_start_steps", 0)
 
         # Collect episode rewards (the Monitor wrapper puts episode stats
         # under the "episode" key at episode end)

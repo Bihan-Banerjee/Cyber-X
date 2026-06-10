@@ -261,6 +261,57 @@ def agents_build_and_bc_runs_one_epoch():
     env.close()
 
 
+@test
+def evaluator_runs_on_cpu_clones():
+    """evaluate_iteration must run matches on predict-only CPU copies and
+    leave the live training models untouched on their device.
+
+    Uses CUDA when available: cuDNN flattens LSTM weights into non-leaf
+    tensors after the first forward, which is exactly the state in which a
+    naive deepcopy-based clone crashes mid-training."""
+    import shutil
+    import tempfile
+
+    import torch
+    from agents import RLAgent
+    from config_loader import get_config
+    from evaluator import MARLEvaluator
+    from vec_env_factory import make_vec_env
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    cfg = get_config()
+    att_env = make_vec_env("attacker", 1, 0,
+                           opponent_names=["scripted_defender"],
+                           use_subprocess=False)
+    def_env = make_vec_env("defender", 1, 0,
+                           opponent_names=["scripted_attacker"],
+                           use_subprocess=False)
+    att = RLAgent(att_env, "attacker", cfg.ppo, device=device, seed=0)
+    dfn = RLAgent(def_env, "defender", cfg.ppo, device=device, seed=1)
+    # Trigger cuDNN LSTM weight flattening (first forward pass)
+    att.predict(np.zeros(8, dtype=np.float32))
+    dfn.predict(np.zeros(8, dtype=np.float32))
+    att_params_before = [p.data_ptr() for p in att.model.policy.parameters()]
+
+    tmp = tempfile.mkdtemp()
+    try:
+        ev = MARLEvaluator(save_dir=tmp)
+        m = ev.evaluate_iteration(
+            iteration=1, attacker=att, defender=dfn,
+            baselines_att={}, baselines_def={},
+            n_episodes=2, curriculum_level=0, silent=True,
+        )
+        assert "main_match" in m and m["main_match"]["n_episodes"] == 2
+        # Live model never migrated: same parameter storage as before eval
+        att_params_after = [p.data_ptr() for p in att.model.policy.parameters()]
+        assert att_params_before == att_params_after, \
+            "eval moved/reallocated the live training model"
+    finally:
+        att_env.close()
+        def_env.close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":

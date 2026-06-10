@@ -242,21 +242,23 @@ class MARLTrainer:
         latest = self._latest_opponent_path(role)
         has_latest = os.path.exists(latest)
 
-        n_scripted = min(self.cfg.league.scripted_slots, self.n_envs)
-        n_latest   = min(self.cfg.league.latest_slots, self.n_envs - n_scripted)
+        n = self.n_envs
+        n_scripted = min(self.cfg.league.scripted_slots, n)
+        n_latest   = min(self.cfg.league.latest_slots, n - n_scripted) if has_latest else 0
+        # Ghost slots are capped at the number of DISTINCT ghosts and drawn
+        # without replacement. Early at level 2 the pool holds one ghost
+        # that IS yesterday's latest — filling 4 slots with it gives 6/8
+        # workers the same opponent, which is exactly the specialization
+        # pressure the league exists to prevent. Surplus slots fall back to
+        # scripted opponents until the pool deepens.
+        n_ghost = min(n - n_scripted - n_latest, len(ghosts))
 
-        mix: OpponentMix = []
-        for i in range(self.n_envs):
-            if i < n_scripted:
-                mix.append(("scripted", random.choice(pool)))
-            elif i < n_scripted + n_latest and has_latest:
-                mix.append(("rl", latest))
-            elif ghosts:
-                mix.append(("rl", random.choice(ghosts)))   # uniform, full history
-            elif has_latest:
-                mix.append(("rl", latest))
-            else:
-                mix.append(("scripted", random.choice(pool)))
+        mix: OpponentMix = [("scripted", random.choice(pool))
+                            for _ in range(n_scripted)]
+        mix += [("rl", latest)] * n_latest
+        mix += [("rl", g) for g in random.sample(ghosts, n_ghost)]
+        while len(mix) < n:
+            mix.append(("scripted", random.choice(pool)))
         return mix
 
     def _apply_opponent_mix(self, vec_env, mix: OpponentMix) -> None:
@@ -400,120 +402,20 @@ class MARLTrainer:
             self._phase_llm_oracle_cloning()
 
         for iteration in range(self._start_iteration, n_iterations + 1):
-            iter_t0 = time.time()
-
-            print_iteration_header(
-                iteration        = iteration,
-                n_iterations     = n_iterations,
-                curriculum_level = self._curr_level,
-                run_start        = self._run_start,
-                iter_times       = self._iter_times,
-            )
-
-            self._save_ghost(iteration)
-
-            # ── League: roll and apply this iteration's opponent mix ────────
-            att_mix = self._roll_opponent_mix("attacker")
-            def_mix = self._roll_opponent_mix("defender")
-            self._apply_opponent_mix(self._att_envs, att_mix)
-            self._apply_opponent_mix(self._def_envs, def_mix)
-            print(f"  Attacker vs: {self._describe_mix(att_mix)}")
-            print(f"  Defender vs: {self._describe_mix(def_mix)}")
-
-            curr_timesteps = self.cfg.curriculum.timesteps_for(
-                self._curr_level, timesteps_per_iter)
-            curr_eval_eps = self.cfg.curriculum.eval_episodes_for(
-                self._curr_level, eval_episodes)
-            print(f"  Timesteps: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}"
-                  f"   Envs: {self.n_envs}")
-
-            # ── Train both sides on the persistent pools ────────────────────
-            callbacks = {}
-            for role, agent in (("attacker", self.attacker),
-                                ("defender", self.defender)):
-                ent_coef = self._ent_coef_for(role, iteration)
-                agent.model.ent_coef = ent_coef
-                if iteration <= self.cfg.ppo.warmup_iters:
-                    print(f"  {role.capitalize()} entropy warmup: "
-                          f"ent_coef={ent_coef:.3f}")
-
-                cb = CyberXProgressCallback(
-                    total_timesteps = curr_timesteps,
-                    role            = role,
-                    iteration       = iteration,
-                    n_iterations    = n_iterations,
-                    iteration_start = iter_t0,
-                    run_start       = self._run_start,
-                    device          = self.device,
-                )
-                callbacks[role] = cb
-                agent.model.learn(
-                    total_timesteps     = curr_timesteps,
-                    reset_num_timesteps = False,
-                    tb_log_name         = role,
-                    callback            = cb,
-                )
-
-            # Checkpoint — runs in a background thread so GPU serialisation
-            # never blocks the loop. Level 0-1: every 5 iterations.
-            should_checkpoint = (
-                n_iterations > 2 and
-                (self._curr_level == 2 or iteration % 5 == 0)
-            )
-            if should_checkpoint:
-                print("  Saving checkpoint (async)...", flush=True)
-                self._checkpoint_async(iteration)
-
-            # At level 0, skip baseline matches — only the main match
-            # informs promotion there, and it saves ~50 min/iteration.
-            run_baselines = self._curr_level > 0
-            n_matches = 7 if run_baselines else 1
-            print(f"  Evaluating ({curr_eval_eps * n_matches} eps, "
-                  f"{n_matches} match{'es' if n_matches > 1 else ''})...", flush=True)
-
-            metrics = self.evaluator.evaluate_iteration(
-                iteration        = iteration,
-                attacker         = self.attacker,
-                defender         = self.defender,
-                baselines_att    = {
-                    "random":   RandomAttacker(),
-                    "scripted": ScriptedAttacker(),
-                    "expert":   ExpertAttacker(),
-                } if run_baselines else {},
-                baselines_def    = {
-                    "random":   RandomDefender(),
-                    "scripted": ScriptedDefender(),
-                    "expert":   ExpertDefender(),
-                } if run_baselines else {},
-                n_episodes       = curr_eval_eps,
-                curriculum_level = self._curr_level,
-                silent           = True,
-            )
-
-            iter_elapsed = time.time() - iter_t0
-            self._iter_times.append(iter_elapsed)
-
-            self._update_history(iteration, metrics)
-            self._update_best_models(metrics)
-            self._check_curriculum_promotion(metrics)
-            self._stage_iter_count += 1
-
-            print_iteration_summary(
-                iteration     = iteration,
-                n_iterations  = n_iterations,
-                metrics       = metrics,
-                history       = self.history,
-                iter_elapsed  = iter_elapsed,
-                run_start     = self._run_start,
-                att_callback  = callbacks["attacker"],
-                def_callback  = callbacks["defender"],
-            )
-
-            if iteration % self.cfg.logging.get("save_plots_every_n_iters", 5) == 0:
-                self.evaluator.plot_training_curves()
-                self.evaluator.plot_action_heatmap(iteration)
-
-            self.save_state(iteration)
+            try:
+                self._run_iteration(iteration, n_iterations,
+                                    timesteps_per_iter, eval_episodes)
+            except (EOFError, BrokenPipeError, ConnectionResetError):
+                # On Windows, Ctrl+C reaches the SubprocVecEnv workers too;
+                # if they die before the iteration finishes, the pipes break.
+                # When a pause was requested this is a graceful stop, not a
+                # crash — state from the last completed iteration is saved.
+                if self._pause_requested:
+                    print("\n  Paused mid-iteration (env workers interrupted)."
+                          f"\n  To resume:  python run_training.py --resume"
+                          f"\n  State file: {self.save_dir}/{self.STATE_FILENAME}\n")
+                    return self.history
+                raise
 
             if self._pause_requested:
                 print(f"\n  Training paused after iteration {iteration}.")
@@ -523,6 +425,128 @@ class MARLTrainer:
 
         self._save_final()
         return self.history
+
+    def _run_iteration(
+        self,
+        iteration:          int,
+        n_iterations:       int,
+        timesteps_per_iter: int,
+        eval_episodes:      int,
+    ) -> None:
+        iter_t0 = time.time()
+
+        print_iteration_header(
+            iteration        = iteration,
+            n_iterations     = n_iterations,
+            curriculum_level = self._curr_level,
+            run_start        = self._run_start,
+            iter_times       = self._iter_times,
+        )
+
+        self._save_ghost(iteration)
+
+        # ── League: roll and apply this iteration's opponent mix ────────
+        att_mix = self._roll_opponent_mix("attacker")
+        def_mix = self._roll_opponent_mix("defender")
+        self._apply_opponent_mix(self._att_envs, att_mix)
+        self._apply_opponent_mix(self._def_envs, def_mix)
+        print(f"  Attacker vs: {self._describe_mix(att_mix)}")
+        print(f"  Defender vs: {self._describe_mix(def_mix)}")
+
+        curr_timesteps = self.cfg.curriculum.timesteps_for(
+            self._curr_level, timesteps_per_iter)
+        curr_eval_eps = self.cfg.curriculum.eval_episodes_for(
+            self._curr_level, eval_episodes)
+        print(f"  Timesteps: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}"
+              f"   Envs: {self.n_envs}")
+
+        # ── Train both sides on the persistent pools ────────────────────
+        callbacks = {}
+        for role, agent in (("attacker", self.attacker),
+                            ("defender", self.defender)):
+            ent_coef = self._ent_coef_for(role, iteration)
+            agent.model.ent_coef = ent_coef
+            if iteration <= self.cfg.ppo.warmup_iters:
+                print(f"  {role.capitalize()} entropy warmup: "
+                      f"ent_coef={ent_coef:.3f}")
+
+            cb = CyberXProgressCallback(
+                total_timesteps = curr_timesteps,
+                role            = role,
+                iteration       = iteration,
+                n_iterations    = n_iterations,
+                iteration_start = iter_t0,
+                run_start       = self._run_start,
+                device          = self.device,
+            )
+            callbacks[role] = cb
+            agent.model.learn(
+                total_timesteps     = curr_timesteps,
+                reset_num_timesteps = False,
+                tb_log_name         = role,
+                callback            = cb,
+            )
+
+        # Checkpoint — runs in a background thread so disk I/O never
+        # blocks the loop. Level 0-1: every 5 iterations.
+        should_checkpoint = (
+            n_iterations > 2 and
+            (self._curr_level == 2 or iteration % 5 == 0)
+        )
+        if should_checkpoint:
+            print("  Saving checkpoint (async)...", flush=True)
+            self._checkpoint_async(iteration)
+
+        # At level 0, skip baseline matches — only the main match
+        # informs promotion there, and it saves ~50 min/iteration.
+        run_baselines = self._curr_level > 0
+        n_matches = 7 if run_baselines else 1
+        print(f"  Evaluating ({curr_eval_eps * n_matches} eps, "
+              f"{n_matches} match{'es' if n_matches > 1 else ''})...", flush=True)
+
+        metrics = self.evaluator.evaluate_iteration(
+            iteration        = iteration,
+            attacker         = self.attacker,
+            defender         = self.defender,
+            baselines_att    = {
+                "random":   RandomAttacker(),
+                "scripted": ScriptedAttacker(),
+                "expert":   ExpertAttacker(),
+            } if run_baselines else {},
+            baselines_def    = {
+                "random":   RandomDefender(),
+                "scripted": ScriptedDefender(),
+                "expert":   ExpertDefender(),
+            } if run_baselines else {},
+            n_episodes       = curr_eval_eps,
+            curriculum_level = self._curr_level,
+            silent           = True,
+        )
+
+        iter_elapsed = time.time() - iter_t0
+        self._iter_times.append(iter_elapsed)
+
+        self._update_history(iteration, metrics)
+        self._update_best_models(metrics)
+        self._check_curriculum_promotion(metrics)
+        self._stage_iter_count += 1
+
+        print_iteration_summary(
+            iteration     = iteration,
+            n_iterations  = n_iterations,
+            metrics       = metrics,
+            history       = self.history,
+            iter_elapsed  = iter_elapsed,
+            run_start     = self._run_start,
+            att_callback  = callbacks["attacker"],
+            def_callback  = callbacks["defender"],
+        )
+
+        if iteration % self.cfg.logging.get("save_plots_every_n_iters", 5) == 0:
+            self.evaluator.plot_training_curves()
+            self.evaluator.plot_action_heatmap(iteration)
+
+        self.save_state(iteration)
 
     # ── Phase 0 helpers ────────────────────────────────────────────────────────
 
@@ -662,12 +686,14 @@ class MARLTrainer:
     # ── Checkpointing ──────────────────────────────────────────────────────────
 
     def _checkpoint_async(self, iteration: int) -> None:
-        """Save policy state dicts in a background daemon thread so GPU
-        serialisation never blocks the next training iteration. Snapshots
-        are deep-copied on the main thread first, so the background write
-        works on a stable copy even while the models keep training."""
-        att_state = copy.deepcopy(self.attacker.model.policy.state_dict())
-        def_state = copy.deepcopy(self.defender.model.policy.state_dict())
+        """Save policy state dicts in a background daemon thread so disk
+        I/O never blocks the next training iteration. Snapshots are copied
+        to CPU on the main thread first, so the background thread performs
+        no CUDA operations concurrently with training."""
+        att_state = {k: v.detach().cpu()
+                     for k, v in self.attacker.model.policy.state_dict().items()}
+        def_state = {k: v.detach().cpu()
+                     for k, v in self.defender.model.policy.state_dict().items()}
 
         def _do_save():
             try:
