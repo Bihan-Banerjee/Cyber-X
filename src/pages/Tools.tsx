@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useState } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
 import { Input } from "@/components/ui/input";
@@ -405,7 +405,12 @@ const Tools = () => {
     { icon: BookOpen, name: "XXE / SSTI Library", description: "Browse XXE and SSTI payload libraries for all major template engines", path: "/tools/xxe-ssti", category: "Web", usage: "Switch between XXE and SSTI tabs to browse and copy payloads for each attack type and engine.", details: "XXE: 7 categories. SSTI: detection and exploitation payloads for Jinja2, Twig, Smarty, Freemarker, Velocity, ERB." },
   ];
 
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+  const setPage = (value: number | ((prev: number) => number)) => {
+    const next = typeof value === "function" ? value(page) : value;
+    setSearchParams((p) => { p.set("page", String(next)); return p; }, { replace: true });
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -678,14 +683,22 @@ const Tools = () => {
       </CyberpunkCard>
 
       {/* Cyberpunk Tooltip */}
-      {hoveredTool && hoveredToolData && (
+      {hoveredTool && hoveredToolData && (() => {
+        const TOOLTIP_W = 420;
+        const TOOLTIP_H = 260; // estimated max height
+        const MARGIN = 12;
+        const flipX = tooltipPosition.x + TOOLTIP_W + MARGIN > window.innerWidth;
+        const flipY = tooltipPosition.y + TOOLTIP_H + MARGIN > window.innerHeight;
+        const left = flipX
+          ? tooltipPosition.x - TOOLTIP_W - MARGIN
+          : tooltipPosition.x + MARGIN;
+        const top = flipY
+          ? tooltipPosition.y - TOOLTIP_H - MARGIN
+          : tooltipPosition.y + MARGIN;
+        return (
         <div
           className="fixed z-50 pointer-events-none"
-          style={{
-            left: `${tooltipPosition.x + 10}px`,
-            top: `${tooltipPosition.y + 10}px`,
-            maxWidth: '420px',
-          }}
+          style={{ left: `${left}px`, top: `${top}px`, maxWidth: `${TOOLTIP_W}px` }}
         >
           <div className="bg-black/95 border border-cyber-cyan/40 rounded-lg p-4 shadow-2xl backdrop-blur-sm">
             <div className="border-b border-cyber-cyan/30 pb-2 mb-3">
@@ -717,7 +730,8 @@ const Tools = () => {
             <div className="absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-cyber-red via-cyber-cyan to-cyber-red opacity-50"></div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </>
   );
 };
