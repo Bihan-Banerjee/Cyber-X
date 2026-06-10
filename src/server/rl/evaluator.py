@@ -16,11 +16,9 @@ Paper metrics produced:
   • Elo trajectories over training iterations
   • Strategy entropy  (action distribution Shannon entropy per agent)
 
-v1.1 fix: RL defender now maintains LSTM hidden state between steps
-          during evaluation via a _StatefulDefender wrapper.  Previously
-          the defender's LSTM state was silently reset every step because
-          the env calls opponent_model.predict() with no state argument,
-          causing systematic underestimation of RL defender performance.
+v1.2: the local _StatefulDefender wrapper was replaced by the shared
+      shared_honeypot_env.StatefulOpponent (the same class the training
+      envs use), and eval matches are seeded so results are reproducible.
 """
 
 import json
@@ -245,9 +243,11 @@ class MARLEvaluator:
             futures = {
                 pool.submit(
                     self._run_match, att, dfn, n_episodes,
-                    curriculum_level, label
+                    curriculum_level, label,
+                    # Deterministic per-match seed → reproducible eval
+                    iteration * 9973 + idx,
                 ): label
-                for label, att, dfn in match_list
+                for idx, (label, att, dfn) in enumerate(match_list)
             }
             for future in as_completed(futures):
                 label = futures[future]
@@ -312,21 +312,21 @@ class MARLEvaluator:
         n_episodes: int,
         curriculum_level: int,
         label: str = "",
+        seed: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Run n_episodes between attacker and defender.
 
         Handles BOTH:
-          • RL agents  (AttackerAgent / DefenderAgent with .model attribute)
+          • RL agents  (RLAgent with .model attribute)
           • Scripted agents (RandomAttacker / ScriptedDefender etc. with .predict())
 
-        v1.1 fix: RL defender is wrapped in _StatefulDefender so its LSTM
-        hidden state persists across steps within each episode.  Without
-        this, the defender's LSTM was reset every single step because the
-        env calls opponent_model.predict() with no state argument, causing
-        systematic underperformance of RL defenders in evaluation.
+        The RL defender is wrapped in the shared StatefulOpponent so its LSTM
+        hidden state persists across steps within each episode (the env calls
+        opponent_model.predict() with no state argument). The env itself
+        resets/seeds the wrapper at episode boundaries.
         """
-        from shared_honeypot_env import SharedHoneypotEnv
+        from shared_honeypot_env import SharedHoneypotEnv, StatefulOpponent
 
         att_wins   = 0
         def_wins   = 0
@@ -342,46 +342,34 @@ class MARLEvaluator:
         att_is_rl = hasattr(attacker_agent, "model")
         def_is_rl = hasattr(defender_agent, "model")
 
-        # ── Stateful defender wrapper ──────────────────────────────────────
-        # The env calls opponent_model.predict(obs) with no LSTM state arg,
-        # which silently resets the defender's hidden state every step.
-        # This wrapper caches and threads the LSTM state between calls so
-        # the RL defender has proper temporal memory during evaluation.
-        class _StatefulDefender:
-            def __init__(self, agent):
-                self._agent      = agent
-                self._lstm_state = None
+        # The env drives the defender as its internal opponent; RL defenders
+        # need LSTM state threading, scripted ones pass through unchanged.
+        eval_defender = (StatefulOpponent(defender_agent.model)
+                         if def_is_rl else defender_agent)
 
-            def predict(self, obs, deterministic=True):
-                obs_arr = np.array(obs, dtype=np.float32).reshape(1, -1)
-                act, self._lstm_state = self._agent.model.predict(
-                    obs_arr, state=self._lstm_state, deterministic=deterministic
-                )
-                return int(np.asarray(act).flat[0]), None
-
-            def reset(self):
-                """Call at the start of each episode to clear LSTM memory."""
-                self._lstm_state = None
-
-        # Build the opponent the env will call into.
-        # Scripted defenders are passed through unchanged.
-        eval_defender = _StatefulDefender(defender_agent) if def_is_rl else defender_agent
-
-        # Create one env per match — reuse across episodes to avoid repeated
-        # Python object allocation (previously created per episode).
+        # One env per match — reused across episodes. The seeded reset makes
+        # the whole match reproducible (env noise, scripted opponents, and
+        # success-probability draws all flow from this np_random stream).
         env = SharedHoneypotEnv(
             mode="attacker",
             opponent_model=eval_defender,
             curriculum_level=curriculum_level,
         )
+        env.reset(seed=seed)
+
+        # Scripted *main-side* attackers have their own RNG: seed it for
+        # reproducibility (env only seeds its internal opponent).
+        if not att_is_rl and hasattr(attacker_agent, "seed") and seed is not None:
+            attacker_agent.seed(seed + 1)
 
         for ep in range(n_episodes):
             obs, _ = env.reset()
 
-            # Reset LSTM states at the start of each episode
+            # Reset per-episode state on the attacker side (the env handles
+            # its internal defender opponent automatically).
             att_lstm_state = None
-            if def_is_rl:
-                eval_defender.reset()
+            if not att_is_rl and hasattr(attacker_agent, "reset"):
+                attacker_agent.reset()
 
             done = False
             ep_att_acts = []
