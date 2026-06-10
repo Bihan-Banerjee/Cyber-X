@@ -329,9 +329,9 @@ def print_iteration_summary(
     usr_pct  = kc.get("user_access", 0)
     root_pct = kc.get("root_access", 0)
     print(f"\n  Kill-chain depth reached")
-    print(f"    External    {_mini_bar(ext_pct,  25, '─', ' ')} {ext_pct:5.1%}")
-    print(f"    User access {_mini_bar(usr_pct,  25, '▒', ' ')} {usr_pct:5.1%}")
-    print(f"    Root access {_mini_bar(root_pct, 25, '█', ' ')} {root_pct:5.1%}")
+    print(f"    Recon       {_mini_bar(ext_pct,  25, '─', ' ')} {ext_pct:5.1%}")
+    print(f"    Foothold    {_mini_bar(usr_pct,  25, '▒', ' ')} {usr_pct:5.1%}")
+    print(f"    Privileged  {_mini_bar(root_pct, 25, '█', ' ')} {root_pct:5.1%}")
 
     # ── Timing & detection ─────────────────────────────────────────────────────
     ttd_str = f"{ttd:.1f} steps" if ttd is not None else "not detected"
@@ -344,7 +344,8 @@ def print_iteration_summary(
     # ── Strategy entropy ───────────────────────────────────────────────────────
     att_e = entr.get("attacker", 0)
     def_e = entr.get("defender", 0)
-    max_e = np.log2(10)
+    from shared_honeypot_env import ACTION_DIM
+    max_e = np.log2(ACTION_DIM)
     print(f"\n  Strategy entropy  (max = {max_e:.2f} bits)")
     print(f"    Attacker  {_mini_bar(att_e/max_e, 20, '▓', '░')} {att_e:.2f} bits")
     print(f"    Defender  {_mini_bar(def_e/max_e, 20, '▓', '░')} {def_e:.2f} bits")

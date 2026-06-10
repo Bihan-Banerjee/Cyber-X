@@ -28,6 +28,8 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import numpy as np
 
+from shared_honeypot_env import ACTION_DIM, ATT_ACTION_NAMES, DEF_ACTION_NAMES
+
 logger = logging.getLogger(__name__)
 
 # ── Optional matplotlib import (graceful degradation in headless envs) ────────
@@ -369,8 +371,8 @@ class MARLEvaluator:
         ttd_list   = []
         fp_list    = []
         kc_depths  = []
-        att_actions: Dict[int, int] = {i: 0 for i in range(10)}
-        def_actions: Dict[int, int] = {i: 0 for i in range(10)}
+        att_actions: Dict[int, int] = {i: 0 for i in range(ACTION_DIM)}
+        def_actions: Dict[int, int] = {i: 0 for i in range(ACTION_DIM)}
 
         # Determine if agents are RL (have .model) or scripted (just .predict)
         att_is_rl = hasattr(attacker_agent, "model")
@@ -546,7 +548,7 @@ class MARLEvaluator:
         ax4 = fig.add_subplot(gs[1, 0])
         ax4.plot(iters, att_entr, "r-o", label="Attacker", linewidth=2)
         ax4.plot(iters, def_entr, "b-s", label="Defender", linewidth=2)
-        ax4.axhline(np.log2(10), color="gray", linestyle="--", alpha=0.5, label="Max entropy")
+        ax4.axhline(np.log2(ACTION_DIM), color="gray", linestyle="--", alpha=0.5, label="Max entropy")
         ax4.set_title("Strategy Entropy (action diversity)")
         ax4.set_xlabel("Training Iteration")
         ax4.set_ylabel("Shannon Entropy (bits)")
@@ -572,7 +574,7 @@ class MARLEvaluator:
         ax6 = fig.add_subplot(gs[1, 2])
         if self.all_metrics:
             last = self.all_metrics[-1]["main_match"]["kc_depth_dist"]
-            labels = ["External", "User\nAccess", "Root\nAccess"]
+            labels = ["Recon", "Foothold", "Privileged"]
             vals   = [last["external"], last["user_access"], last["root_access"]]
             colors = ["#4CAF50", "#FF9800", "#F44336"]
             bars   = ax6.bar(labels, vals, color=colors, edgecolor="white", linewidth=0.8)
@@ -603,28 +605,20 @@ class MARLEvaluator:
         att_counts = m["main_match"].get("att_action_counts", {})
         def_counts = m["main_match"].get("def_action_counts", {})
 
-        att_labels = [
-            "Brute force", "Enumerate", "Recon", "Exfiltrate",
-            "Priv esc.", "Backdoor", "Modify files", "Full dump",
-            "Lateral mvt", "Wait",
-        ]
-        def_labels = [
-            "Monitor", "Rate limit", "Temp block", "Hard block",
-            "Deploy decoy", "Rotate config", "Alert", "Isolate",
-            "Full reset", "Active deception",
-        ]
+        att_labels = [n.replace("_", " ") for n in ATT_ACTION_NAMES]
+        def_labels = [n.replace("_", " ") for n in DEF_ACTION_NAMES]
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
         for ax, counts, labels, title, color in [
             (axes[0], att_counts, att_labels, "Attacker Action Frequency", "Reds"),
             (axes[1], def_counts, def_labels, "Defender Action Frequency", "Blues"),
         ]:
             total = max(sum(counts.values()), 1)
-            vals  = [counts.get(i, 0) / total for i in range(10)]
-            bars  = ax.barh(range(10), vals, color=plt.cm.get_cmap(color)(
-                np.linspace(0.3, 0.9, 10)))
-            ax.set_yticks(range(10))
-            ax.set_yticklabels(labels, fontsize=9)
+            vals  = [counts.get(i, 0) / total for i in range(ACTION_DIM)]
+            bars  = ax.barh(range(ACTION_DIM), vals, color=plt.cm.get_cmap(color)(
+                np.linspace(0.3, 0.9, ACTION_DIM)))
+            ax.set_yticks(range(ACTION_DIM))
+            ax.set_yticklabels(labels, fontsize=8)
             ax.set_xlabel("Frequency (fraction)")
             ax.set_title(f"{title}\n(iteration {iteration})")
             ax.set_xlim(0, max(vals) * 1.2 if max(vals) > 0 else 1)
@@ -647,7 +641,7 @@ class MARLEvaluator:
         total = sum(action_counts.values())
         if total == 0:
             return 0.0
-        probs = np.array([action_counts.get(i, 0) / total for i in range(10)])
+        probs = np.array([action_counts.get(i, 0) / total for i in range(ACTION_DIM)])
         probs = probs[probs > 0]
         # Clamp: floating point can produce -0.0 for a pure deterministic policy
         return max(0.0, float(-np.sum(probs * np.log2(probs))))
@@ -672,12 +666,12 @@ class MARLEvaluator:
         print(f"  Mean false positives/ep:         {m['mean_false_positives']:.2f}")
         kc = m["kc_depth_dist"]
         print(f"  Kill-chain depth:  "
-              f"External={kc['external']:.0%}  "
-              f"User={kc['user_access']:.0%}  "
-              f"Root={kc['root_access']:.0%}")
+              f"Recon={kc['external']:.0%}  "
+              f"Foothold={kc['user_access']:.0%}  "
+              f"Privileged={kc['root_access']:.0%}")
         entr = metrics["strategy_entropy"]
         print(f"  Strategy entropy:  Att={entr['attacker']:.2f}  Def={entr['defender']:.2f}  "
-              f"(max={np.log2(10):.2f} bits)")
+              f"(max={np.log2(ACTION_DIM):.2f} bits)")
         print(f"{'='*60}\n")
 
     def latest_summary_table(self) -> str:
@@ -699,7 +693,7 @@ class MARLEvaluator:
         lines.append(f"| Mean time-to-detect | {'N/A' if ttd is None else f'{ttd:.1f} steps'} |")
         lines.append(f"| Mean false positives / ep | {mm['mean_false_positives']:.2f} |")
         kc = mm["kc_depth_dist"]
-        lines.append(f"| Episodes reaching root access | {kc['root_access']:.1%} |")
+        lines.append(f"| Episodes reaching privileged access | {kc['root_access']:.1%} |")
         lines.append(f"| Attacker strategy entropy | {m['strategy_entropy']['attacker']:.2f} bits |")
         lines.append(f"| Defender strategy entropy | {m['strategy_entropy']['defender']:.2f} bits |")
         for bname, bm in m.get("att_vs_baselines", {}).items():

@@ -112,29 +112,35 @@ class TelemetryAdapter:
         step_fraction: float = 0.5,
     ) -> np.ndarray:
         """
-        Build the 8-dim normalized defender observation from live telemetry.
+        Build the 12-dim normalized v4 defender observation from live telemetry.
 
-        defense_state carries the defender-side flags the simulator tracks
-        internally but ES cannot know (is_blocked, is_rate_limited,
-        decoys_deployed, alerts_triggered) — pass the operator's real state
-        or leave defaults at 0.
+        ES events drive the attacker-derived signals (anomalies, failed
+        logins, egress, distinct hosts, credential anomalies). The SOC's own
+        state — accumulated evidence, deployed decoys, whether a decoy was
+        tripped, containment/rate-limit status, alert count — cannot be read
+        from raw honeypot logs; pass it in defense_state or leave it at 0.
         """
         ds      = defense_state or {}
         summary = self.summarize(self.fetch_events())
-        suspicious = (
+        # Observed anomalies = the attacker-noise proxy the SOC actually sees
+        anomalies = (
             summary["suspicious_commands"]
             + summary["port_scan"]
             + summary["priv_esc_attempts"]
         )
         return defender_observation(
-            failed_logins     = summary["failed_logins"],
-            suspicious_events = suspicious,
-            is_blocked        = bool(ds.get("is_blocked", False)),
-            step_fraction     = step_fraction,
-            files_downloaded  = summary["downloads"],
-            is_rate_limited   = bool(ds.get("is_rate_limited", False)),
-            decoys_deployed   = int(ds.get("decoys_deployed", 0)),
-            alerts_triggered  = int(ds.get("alerts_triggered", 0)),
+            observed_anomalies = anomalies,
+            evidence           = float(ds.get("evidence", 0.0)),
+            failed_logins      = summary["failed_logins"],
+            step_fraction      = step_fraction,
+            egress_volume      = summary["downloads"],
+            alerts             = int(ds.get("alerts", 0)),
+            decoys_deployed    = int(ds.get("decoys_deployed", 0)),
+            decoy_tripped      = bool(ds.get("decoy_tripped", False)),
+            containment_active = bool(ds.get("containment_active", False)),
+            hosts_anomalous    = summary["n_src_ips"],
+            credential_anomaly = summary["priv_esc_attempts"] > 0,
+            rate_limited       = bool(ds.get("rate_limited", False)),
         )
 
 

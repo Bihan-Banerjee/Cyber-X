@@ -39,32 +39,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# ── Action vocabularies ────────────────────────────────────────────────────────
-ATTACKER_ACTIONS = {
-    0: "brute_force_ssh",
-    1: "enumerate_services",
-    2: "execute_recon",
-    3: "exfiltrate_data",
-    4: "privilege_escalation",
-    5: "create_backdoor",
-    6: "modify_system_files",
-    7: "full_data_dump",
-    8: "lateral_movement",
-    9: "wait_observe",
-}
+# ── Action vocabularies (derived from the env so they never drift) ────────────
+from shared_honeypot_env import ATT_ACTION_NAMES, DEF_ACTION_NAMES
 
-DEFENDER_ACTIONS = {
-    0: "monitor_only",
-    1: "rate_limit_ip",
-    2: "temporary_block",
-    3: "permanent_block",
-    4: "deploy_decoy",
-    5: "rotate_honeypot_config",
-    6: "trigger_alert",
-    7: "isolate_segment",
-    8: "full_reset",
-    9: "active_deception",
-}
+ATTACKER_ACTIONS = {i: n for i, n in enumerate(ATT_ACTION_NAMES)}
+DEFENDER_ACTIONS = {i: n for i, n in enumerate(DEF_ACTION_NAMES) if n != "(unused)"}
 
 ACTION_NAME_TO_INT = {
     **{v: k for k, v in ATTACKER_ACTIONS.items()},
@@ -73,68 +52,74 @@ ACTION_NAME_TO_INT = {
 
 # ── Prompt templates ───────────────────────────────────────────────────────────
 
-ATTACKER_SYSTEM_PROMPT = """You are an expert red-team penetration tester advising an AI agent
-in a cybersecurity simulation.  The simulation models an attacker attempting to compromise a
-honeypot environment across three kill-chain stages:
-  EXTERNAL (0) → USER_ACCESS (1) → ROOT_ACCESS (2)
+ATTACKER_SYSTEM_PROMPT = """You are an expert red-team operator advising an AI agent in a
+cybersecurity simulation. It models an APT advancing through a kill chain against a SOC:
+  RECON (0) → FOOTHOLD (1) → PRIVILEGED (2) → OBJECTIVE (win)
 
 Available actions:
-  0: brute_force_ssh          – attempt SSH login; only works from EXTERNAL
-  1: enumerate_services       – list users and ports; requires USER_ACCESS+
-  2: execute_recon            – run whoami/uname/ls; requires USER_ACCESS+
-  3: exfiltrate_data          – download files; requires USER_ACCESS+; high noise
-  4: privilege_escalation     – attempt root; requires USER_ACCESS; high noise
-  5: create_backdoor          – persistence; requires ROOT_ACCESS; high noise
-  6: modify_system_files      – disruption; requires ROOT_ACCESS; high noise
-  7: full_data_dump           – mass exfil; requires ROOT_ACCESS; very high noise
-  8: lateral_movement         – internal scan; requires USER_ACCESS+; high noise
-  9: wait_observe             – do nothing; always safe
+  0: passive_recon          – quiet info gathering; boosts later exploit success
+  1: active_scan            – faster recon, noisier
+  2: exploit_service        – RECON→FOOTHOLD; better if recon done; medium noise
+  3: brute_force            – RECON→FOOTHOLD; low success, very noisy
+  4: phishing               – RECON→FOOTHOLD; stealthy, moderate success
+  5: establish_persistence  – FOOTHOLD+; survive a containment; medium noise
+  6: escalate_privilege     – FOOTHOLD→PRIVILEGED; better with credentials
+  7: dump_credentials       – PRIVILEGED; enables lateral; high noise
+  8: lateral_movement       – PRIVILEGED+creds; expand footprint
+  9: defense_evasion        – clear logs to lower suspicion; can fail
+  10: collect_data          – PRIVILEGED; stage data for exfil
+  11: exfiltrate            – PRIVILEGED+staged; repeat to win by data theft
+  12: execute_impact        – PRIVILEGED; instant win, extremely noisy
+  13: wait                  – dwell; suspicion cools
 
-Scoring: winning = reaching ROOT_ACCESS and surviving.
-         losing  = being blocked and kicked back to EXTERNAL.
-
-Be strategic. Consider stealth vs. speed trade-offs.
+Winning = execute_impact OR exfiltrate enough data. Suspicion you generate lets the
+defender investigate and contain you; persistence lets you survive containment.
+Balance speed against stealth.
 Respond ONLY with a valid JSON object on a single line, no markdown, no prose:
 {"action": "<action_name>", "reasoning": "<one sentence max>"}"""
 
 DEFENDER_SYSTEM_PROMPT = """You are an expert blue-team SOC analyst advising an AI agent
-defending a honeypot environment.
+defending a network against an APT.
 
 Available actions:
-  0: monitor_only             – passive; safe but earns little
-  1: rate_limit_ip            – slow the attacker; justified at ≥2 suspicious events
-  2: temporary_block          – kick attacker back to start; justified at ≥3 events
-  3: permanent_block          – hard block; justified at ≥5 events or exfil detected
-  4: deploy_decoy             – place honeypot decoy; earns passive reward per step
-  5: rotate_honeypot_config   – reduces attacker's kill-chain level; use if inside
-  6: trigger_alert            – escalate; useful if evidence is mounting
-  7: isolate_segment          – emergency; use only if attacker is definitely inside
-  8: full_reset               – nuclear option; very costly, avoid
-  9: active_deception         – confuse attacker with fake data; requires decoys
+  0: monitor              – passive; tiny evidence gain when anomalies are high
+  1: investigate          – convert accumulated suspicion into hard evidence
+  2: rate_limit           – slow the attacker; justified when anomalies are present
+  3: deploy_decoy         – honeypot; a noisy attacker may trip it (instant evidence)
+  4: threat_hunt          – proactively find stealthy intruders
+  5: isolate_host         – contain; justified at moderate evidence (knocks attacker back)
+  6: hard_block           – contain hard; justified at high evidence (full eviction if no persistence)
+  7: patch_harden         – lower the attacker's exploit/escalation success
+  8: rotate_credentials   – invalidate stolen credentials (counters lateral movement)
+  9: restore_backup       – remove attacker persistence
+  10: raise_alert         – escalate; adds evidence, especially after a decoy trip
+  11: deception_response  – actively slow the attacker when decoys are deployed
 
-Strategy: deploy decoys early for passive reward, escalate proportionally to evidence.
-False positives (blocking when attacker is external) are penalised.
-
+You only see NOISY anomalies — benign traffic creates false signals. Containing without
+enough evidence is a costly false positive. Investigate first, then contain decisively.
 Respond ONLY with a valid JSON object on a single line, no markdown, no prose:
 {"action": "<action_name>", "reasoning": "<one sentence max>"}"""
 
 ATTACKER_USER_TEMPLATE = """Current state:
-  kill_chain_level:  {kill_chain}  (0=EXTERNAL, 1=USER_ACCESS, 2=ROOT_ACCESS)
+  kill_chain_stage:  {stage}  (0=RECON, 1=FOOTHOLD, 2=PRIVILEGED)
   current_step:      {step} / {max_steps}
   last_action_success: {last_success}
-  rate_limited_last_step: {last_timeout}
+  recently_detected:   {detected}
+  your_suspicion_heat: {suspicion:.2f} (0=quiet, 1=very hot)
+  recon_done: {recon}  persistence: {persistence}  credentials: {credentials}  data_staged: {data_staged}
+  rate_limited: {rate_limited}
   cumulative_reward_this_episode: {cum_reward:.1f}
 
 What is the optimal action right now? Reply with JSON only."""
 
 DEFENDER_USER_TEMPLATE = """Current state:
-  failed_logins:     {failed_logins}
-  suspicious_events: {suspicious_events}
-  files_downloaded:  {files_downloaded}
-  decoys_deployed:   {decoys_deployed}
-  is_rate_limited:   {is_rate_limited}
-  alerts_triggered:  {alerts_triggered}
-  current_step:      {step} / {max_steps}
+  observed_anomalies: {anomalies:.1f}  (NOISY — may include benign traffic)
+  evidence:           {evidence:.1f}   (hard proof; needed to justify containment)
+  failed_logins:      {failed_logins}
+  egress_volume:      {egress}
+  alerts:             {alerts}   decoys_deployed: {decoys}   decoy_tripped: {decoy_tripped}
+  containment_active: {containment}   credential_anomaly: {cred_anomaly}   rate_limited: {rate_limited}
+  current_step:       {step} / {max_steps}
   cumulative_reward_this_episode: {cum_reward:.1f}
 
 What is the optimal action right now? Reply with JSON only."""
@@ -311,37 +296,38 @@ class LLMOracle:
         cum_reward: float,
         max_steps: int,
     ) -> str:
-        # De-normalise based on role
+        # De-normalise the v4 observation layout based on role
+        o = observation
         if self.role == "attacker":
-            kc   = round(float(observation[0]) * 2.0)
-            step = round(float(observation[1]) * max_steps)
             return self._user_template.format(
-                kill_chain   = f"{kc} ({'EXTERNAL' if kc==0 else 'USER_ACCESS' if kc==1 else 'ROOT_ACCESS'})",
-                step         = step,
+                stage        = round(float(o[0]) * 3.0),
+                step         = round(float(o[1]) * max_steps),
                 max_steps    = max_steps,
-                last_success = bool(observation[2] > 0.5),
-                last_timeout = bool(observation[3] > 0.5),
+                last_success = bool(o[2] > 0.5),
+                detected     = bool(o[3] > 0.5),
+                suspicion    = float(o[4]),
+                recon        = bool(o[5] > 0.5),
+                persistence  = bool(o[6] > 0.5),
+                credentials  = bool(o[7] > 0.5),
+                data_staged  = bool(o[8] > 0.5),
+                rate_limited = bool(o[9] > 0.5),
                 cum_reward   = cum_reward,
             )
-        else:
-            failed_logins     = round(float(observation[0]) * 50.0)
-            suspicious_events = round(float(observation[1]) * 30.0)
-            files_downloaded  = round(float(observation[4]) * 20.0)
-            decoys_deployed   = round(float(observation[6]) * 5.0)
-            is_rate_limited   = bool(observation[5] > 0.5)
-            alerts_triggered  = round(float(observation[7]) * 10.0)
-            step              = round(float(observation[3]) * max_steps)
-            return self._user_template.format(
-                failed_logins     = failed_logins,
-                suspicious_events = suspicious_events,
-                files_downloaded  = files_downloaded,
-                decoys_deployed   = decoys_deployed,
-                is_rate_limited   = is_rate_limited,
-                alerts_triggered  = alerts_triggered,
-                step              = step,
-                max_steps         = max_steps,
-                cum_reward        = cum_reward,
-            )
+        return self._user_template.format(
+            anomalies     = float(o[0]) * 20.0,
+            evidence      = float(o[1]) * 10.0,
+            failed_logins = round(float(o[2]) * 50.0),
+            step          = round(float(o[3]) * max_steps),
+            max_steps     = max_steps,
+            egress        = round(float(o[4]) * 5.0),
+            alerts        = round(float(o[5]) * 10.0),
+            decoys        = round(float(o[6]) * 5.0),
+            decoy_tripped = bool(o[7] > 0.5),
+            containment   = bool(o[8] > 0.5),
+            cred_anomaly  = bool(o[10] > 0.5),
+            rate_limited  = bool(o[11] > 0.5),
+            cum_reward    = cum_reward,
+        )
 
     # ── LLM API calls ──────────────────────────────────────────────────────────
 

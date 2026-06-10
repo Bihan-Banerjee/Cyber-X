@@ -75,8 +75,8 @@ logger = logging.getLogger(__name__)
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════╗
-║        CyberX  MARL  Training  System  (v3.0)           ║
-║   Attacker vs Defender · Curriculum · League Play       ║
+║        CyberX  MARL  Training  System  (v4.0)           ║
+║   APT vs SOC · Curriculum · League · Fictitious Play    ║
 ║              LLM Oracle · Elo Evaluation                ║
 ╚══════════════════════════════════════════════════════════╝
 """
