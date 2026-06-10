@@ -9,7 +9,8 @@ import mapData from "./routes/mapData.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000
-const RL_API_URL = 'http://localhost:5000';
+// Python Flask RL API (src/server/rl/api.py) — serves on 5001 by default
+const RL_API_URL = process.env.RL_API_URL || 'http://localhost:5001';
 
 app.use(cors());
 app.use(express.json());
@@ -30,14 +31,16 @@ app.get('/health', (req, res) => {
 
 app.use('/api/honeypot', honeypotRoutes);
 
-// Proxy all /api/rl/* requests to Python Flask server
+// Proxy all /api/rl/* requests to Python Flask server.
+// req.originalUrl keeps the /api/rl prefix (req.url has it stripped by the
+// mount), and Flask registers its routes under /api/rl/... too.
 app.use('/api/rl', async (req, res) => {
   try {
     const response = await axios({
       method: req.method,
-      url: `${RL_API_URL}${req.url}`,
+      url: `${RL_API_URL}${req.originalUrl}`,
       data: req.body,
-      headers: req.headers,
+      headers: { 'Content-Type': req.headers['content-type'] || 'application/json' },
     });
     res.status(response.status).json(response.data);
   } catch (error: any) {

@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """
-run_training.py  –  CyberX MARL Training Entry Point  (v2.1)
+run_training.py  –  CyberX MARL Training Entry Point  (v3.0)
 ==============================================================
 The if __name__ == "__main__" guard at the bottom is CRITICAL on Windows.
 SubprocVecEnv uses the 'spawn' start method, which re-imports this module
 in each worker process. Without the guard, workers try to re-run main(),
 causing infinite process spawning and deadlock.
 
+Defaults come from config.json (see config_loader.py); CLI args override.
+
 Usage:
   python run_training.py --mode smoke
   python run_training.py --mode dev --no-bc
   python run_training.py --mode full
   python run_training.py --mode full --resume
+  python run_training.py --mode full --seed 7
   python run_training.py --mode full --no-parallel   # disable SubprocVecEnv
 """
 
 import argparse
-import json
 import multiprocessing
 import os
+import sys
 
-
-def load_config(config_path: str = "config.json") -> dict:
-    if os.path.exists(config_path):
-        with open(config_path) as f:
-            return json.load(f)
-    return {}
+# Windows consoles default to cp1252, which can't encode the banner's
+# box-drawing characters
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main():
@@ -40,15 +42,22 @@ def main():
     parser.add_argument("--timesteps",     type=int,   default=None)
     parser.add_argument("--eval-episodes", type=int,   default=None)
     parser.add_argument("--save-dir",      type=str,   default="./models/cyberx_marl")
+    parser.add_argument("--seed",          type=int,   default=None,
+        help="Master seed (default: config.json seed)")
+    parser.add_argument("--n-envs",        type=int,   default=None,
+        help="Parallel env workers (default: config.json training.n_envs)")
     parser.add_argument("--no-bc",         action="store_true")
     parser.add_argument("--llm-oracle",    action="store_true")
     parser.add_argument("--llm-provider",
         choices=["gemini", "ollama", "anthropic", "openai"], default=None)
-    parser.add_argument("--device",        type=str,   default="auto")
+    parser.add_argument("--device",        type=str,   default=None)
     parser.add_argument("--resume",        action="store_true")
     parser.add_argument("--no-parallel",   action="store_true",
         help="Disable SubprocVecEnv (fallback to DummyVecEnv)")
     args = parser.parse_args()
+
+    from config_loader import get_config
+    cfg = get_config()
 
     PRESETS = {
         "smoke": dict(iterations=2,  timesteps=5_000,   eval_episodes=10,  run_bc=False),
@@ -62,13 +71,12 @@ def main():
         eval_eps  = args.eval_episodes or p["eval_episodes"]
         run_bc    = (not args.no_bc)   and p["run_bc"]
     else:
-        n_iters   = args.iterations    or 30
-        timesteps = args.timesteps     or 100_000
-        eval_eps  = args.eval_episodes or 50
-        run_bc    = not args.no_bc
+        n_iters   = args.iterations    or cfg.training.n_iterations
+        timesteps = args.timesteps     or cfg.training.timesteps_per_iter
+        eval_eps  = args.eval_episodes or cfg.training.eval_episodes
+        run_bc    = (not args.no_bc)   and cfg.training.run_bc_phase
 
-    cfg        = load_config()
-    llm_config = cfg.get("llm", {})
+    llm_config = cfg.get_llm_config()
     run_llm    = args.llm_oracle or llm_config.get("enabled", False)
     llm_config["enabled"] = run_llm
     if args.llm_provider:
@@ -84,6 +92,9 @@ def main():
             llm_config["enabled"] = False
             run_llm = False
 
+    seed         = args.seed if args.seed is not None else cfg.seed
+    n_envs       = args.n_envs if args.n_envs is not None else cfg.training.n_envs
+    device       = args.device or cfg.training.device
     use_parallel = not args.no_parallel
     resume_note  = "  (resuming from saved state)" if args.resume else ""
 
@@ -98,9 +109,10 @@ def main():
 ║  Behavioral cloning:{str(run_bc):<36} ║
 ║  LLM oracle:        {str(run_llm):<36} ║
 ║  LLM provider:      {display_provider:<36} ║
-║  Device:            {args.device:<36} ║
+║  Device:            {device:<36} ║
+║  Seed:              {seed:<36} ║
 ║  Resume:            {str(args.resume):<36} ║
-║  Parallel envs:     {str(use_parallel):<36} ║
+║  Parallel envs:     {str(use_parallel) + f' (n={n_envs})':<36} ║
 ║  Save dir:          {args.save_dir:<36} ║
 ╚══════════════════════════════════════════════════════════╝
   Total PPO steps ≈ {n_iters * timesteps * 2:,}  (both agents){resume_note}
@@ -109,13 +121,16 @@ def main():
     from trainer import MARLTrainer
 
     trainer = MARLTrainer(
-        save_dir      = args.save_dir,
-        llm_config    = llm_config,
-        device        = args.device,
-        use_subprocess= use_parallel,
+        save_dir       = args.save_dir,
+        n_envs         = n_envs,
+        device         = device,
+        llm_config     = llm_config,
+        use_subprocess = use_parallel,
+        seed           = seed,
+        config         = cfg,
     )
 
-    history = trainer.train(
+    trainer.train(
         n_iterations         = n_iters,
         timesteps_per_iter   = timesteps,
         eval_episodes        = eval_eps,
