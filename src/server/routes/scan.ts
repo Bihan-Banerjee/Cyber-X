@@ -73,7 +73,6 @@ import { performTraceroute } from '../scanners/traceroute.js';
 import { lookupASN } from '../scanners/bgpASNLookup.js';
 import { lookupPhoneNumber } from '../scanners/phoneNumberOSINT.js';
 import { checkDomainReputation } from '../scanners/domainReputation.js';
-import { generateWordlist as generateWordlistP3 } from '../scanners/wordlistGenerator.js';
 import { analyzeAPK } from '../scanners/apkAnalyzer.js';
 import { crackWifiHandshake } from '../scanners/wifiHandshakeCracker.js';
 import { performAzureBlobFinding } from '../scanners/azureBlobFinder.js';
@@ -1767,13 +1766,14 @@ router.post('/host-discovery', async (req, res) => {
 // Hash Generator (bcrypt)
 router.post('/hash-generate', async (req, res) => {
   try {
-    const { input, algorithm = 'bcrypt', rounds = 10 } = req.body;
+    const { input, algorithm = 'bcrypt', rounds = 10, verify } = req.body;
     if (!input || typeof input !== 'string') return res.status(400).json({ error: 'Invalid input' });
     if (input.length > 1000) return res.status(400).json({ error: 'Input too long' });
     const safeRounds = Math.min(Math.max(parseInt(rounds), 10), 14);
-    logToolActivity('Hash Generator', `Generating ${algorithm} hash`, 'info');
-    const result = await generateHash(input, algorithm, safeRounds);
-    logToolActivity('Hash Generator', `Generated ${algorithm} hash`, 'success');
+    const verifyStr = verify && typeof verify === 'string' ? verify.trim() : undefined;
+    logToolActivity('Hash Generator', `${verifyStr ? 'Verifying' : 'Generating'} ${algorithm} hash`, 'info');
+    const result = await generateHash(input, algorithm, safeRounds, verifyStr);
+    logToolActivity('Hash Generator', `${verifyStr ? 'Verified' : 'Generated'} ${algorithm} hash`, 'success');
     res.json(result);
   } catch (error: any) {
     logToolActivity('Hash Generator', `Generation failed: ${error.message}`, 'warning');
@@ -1920,14 +1920,18 @@ router.post('/apk-analyze', upload.single('file'), async (req, res) => {
 
 // WiFi Handshake Cracker
 const wifiLimiter = createRateLimiter(3, 60000);
-router.post('/wifi-crack', wifiLimiter, upload.single('capFile'), async (req, res) => {
+router.post('/wifi-crack', wifiLimiter, async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No capture file uploaded' });
-    const ssid = (req.body.ssid || '').trim();
-    const wordlistRaw: string = req.body.wordlist || '';
-    const wordlist = wordlistRaw.split('\n').filter((w: string) => w.trim().length > 0);
-    logToolActivity('WiFi Cracker', `Cracking handshake for SSID: ${ssid || '(none)'}`, 'info');
-    const result = await crackWifiHandshake(ssid, wordlist);
+    const { ssid, wordlist, targetPMK } = req.body;
+    if (!ssid || typeof ssid !== 'string' || !ssid.trim()) {
+      return res.status(400).json({ error: 'SSID is required' });
+    }
+    if (!Array.isArray(wordlist) || wordlist.length === 0) {
+      return res.status(400).json({ error: 'wordlist must be a non-empty array of strings' });
+    }
+    const safeWordlist = wordlist.slice(0, 1000).map(String);
+    logToolActivity('WiFi Cracker', `Cracking handshake for SSID: ${ssid.trim()}`, 'info');
+    const result = await crackWifiHandshake(ssid.trim(), safeWordlist, targetPMK?.trim() || undefined);
     logToolActivity('WiFi Cracker', `Completed crack attempt`, 'success');
     res.json(result);
   } catch (error: any) {

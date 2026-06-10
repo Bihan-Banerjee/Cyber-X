@@ -106,11 +106,7 @@ export default function ReverseShellGenerator() {
   };
 
   return (
-    <CyberpunkCard
-      title="REVERSE SHELL GENERATOR"
-      description="Generate reverse shell payloads for various languages and environments."
-      icon={<Terminal className="w-5 h-5" />}
-    >
+    <CyberpunkCard title="REVERSE SHELL GENERATOR">
       <div className="space-y-6">
         {/* Config */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

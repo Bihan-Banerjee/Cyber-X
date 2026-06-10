@@ -44,7 +44,7 @@ const parsePEM = (pem: string): ParsedCert | null => {
     // Basic heuristic: extract printable strings from DER
     let subject = "(see raw bytes)";
     let issuer = "(see raw bytes)";
-    let serial = bytes.slice(4, 16).map((b) => b.toString(16).padStart(2, "0")).join(":").toUpperCase();
+    let serial = Array.from(bytes.slice(4, 16)).map((b) => b.toString(16).padStart(2, "0")).join(":").toUpperCase();
 
     // Try to extract CN from DER as ASCII runs
     const text = Array.from(bytes)

@@ -21,11 +21,13 @@ const PRESETS = [
 ];
 
 const calcKeyspace = (mask: string): number => {
-  const tokens = mask.match(/\?[luds a]/g) || [];
-  return tokens.reduce((acc, token) => {
+  const tokens: string[] = mask.match(/\?[luds a]/g) ?? [];
+  let keyspace = 1;
+  for (const token of tokens) {
     const cls = CHAR_CLASSES.find((c) => c.symbol === token);
-    return acc * (cls?.size ?? 1);
-  }, 1);
+    keyspace *= cls?.size ?? 1;
+  }
+  return keyspace;
 };
 
 const formatBig = (n: number): string => {

@@ -73,7 +73,7 @@ const CodeObfuscator = () => {
       const str = d ?? s;
       if (str.length === 0) return match;
       const hex = Array.from(str)
-        .map((c) => "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0"))
+        .map((c) => "\\x" + (c as string).charCodeAt(0).toString(16).padStart(2, "0"))
         .join("");
       return `"${hex}"`;
     });
