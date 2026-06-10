@@ -61,57 +61,13 @@ def _tw(default: int = 72) -> int:
 # ══════════════════════════════════════════════════════════════════════════════
 #   SB3 CALLBACK — hooks into every rollout
 # ══════════════════════════════════════════════════════════════════════════════
-
-class EpsilonGreedyWarmupCallback(BaseCallback):
-    """
-    Injects random action exploration for the first N iterations to prevent
-    LSTM policy collapse.  Epsilon decays linearly from start_eps to 0.
-
-    Why this is needed:
-      A collapsed LSTM (entropy=0.00) has zero gradient from the policy
-      entropy term — ent_coef can't help because log(0) is undefined and
-      PyTorch clips it.  The only way to break out is to force the network
-      to see state-action pairs it has never generated itself, so the value
-      function can learn that non-wait actions lead to better outcomes.
-
-    This is standard practice in MARL with recurrent policies.
-    """
-
-    def __init__(
-        self,
-        action_space_n:   int,
-        start_eps:        float = 0.30,
-        end_eps:          float = 0.0,
-        warmup_iters:     int   = 6,
-        current_iteration: int  = 1,
-        verbose:          int   = 0,
-    ):
-        super().__init__(verbose)
-        self.action_space_n    = action_space_n
-        self.warmup_iters      = warmup_iters
-        self.current_iteration = current_iteration
-        # Linear decay: iter 1 → start_eps, iter warmup_iters → end_eps
-        frac = max(0.0, 1.0 - (current_iteration - 1) / max(warmup_iters, 1))
-        self.epsilon = start_eps * frac
-        self._injected = 0
-        self._total    = 0
-
-    def _on_step(self) -> bool:
-        if self.epsilon <= 0:
-            return True
-        if "actions" in self.locals and np.random.random() < self.epsilon:
-            self.locals["actions"][:] = np.random.randint(
-                0, self.action_space_n, size=self.locals["actions"].shape
-            )
-            self._injected += 1   # count decisions, not individual env actions
-        self._total += 1
-        return True
-
-    @property
-    def inject_rate(self) -> float:
-        """Fraction of steps where a random action was injected (0–1)."""
-        return self._injected / max(self._total, 1)
-
+# NOTE: the old EpsilonGreedyWarmupCallback was removed in v3.0. It mutated
+# locals["actions"] AFTER env.step() but BEFORE rollout_buffer.add(), so the
+# buffer stored random actions that were never executed, paired with rewards
+# and log-probs from the real actions — corrupting PPO's importance ratios
+# for the whole warmup. Exploration warmup is now done by annealing
+# model.ent_coef from the trainer (config.json [ppo] warmup_ent_coef /
+# warmup_iters), which is sound.
 
 
 class CyberXProgressCallback(BaseCallback):
@@ -181,11 +137,10 @@ class CyberXProgressCallback(BaseCallback):
     def _on_step(self) -> bool:
         steps_done = self.num_timesteps
 
-        # Collect episode rewards if available
+        # Collect episode rewards (the Monitor wrapper puts episode stats
+        # under the "episode" key at episode end)
         if self.locals.get("infos"):
             for info in self.locals["infos"]:
-                ep_info = info.get("episode") or info.get("terminal_observation")
-                # SB3 Monitor wrapper puts episode stats under "episode" key
                 if isinstance(info.get("episode"), dict):
                     self._ep_rewards.append(info["episode"]["r"])
                     self._ep_lengths.append(info["episode"]["l"])
@@ -206,9 +161,10 @@ class CyberXProgressCallback(BaseCallback):
             if self._ep_rewards:
                 pf["r̄"] = f"{np.mean(self._ep_rewards):+.2f}"
 
-            # Steps/sec from recent tick times
+            # Steps/sec from recent tick times (one tick = num_envs env steps)
             if self._step_times:
-                sps = 1.0 / max(np.mean(self._step_times), 1e-9) * 8  # ×8 envs
+                n_envs = getattr(self.training_env, "num_envs", 1)
+                sps = 1.0 / max(np.mean(self._step_times), 1e-9) * n_envs
                 pf["sps"] = f"{sps:.0f}"
 
             # GPU VRAM

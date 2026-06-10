@@ -1,125 +1,109 @@
 """
-vec_env_factory.py  –  CyberX Parallel Environment Factory
-===========================================================
-SubprocVecEnv requires environment factory functions to be picklable.
-On Windows (spawn start method), this means they must be module-level
-named functions — not lambdas or closures capturing non-picklable objects.
+vec_env_factory.py  –  CyberX Persistent Parallel Environment Factory  (v3.0)
+==============================================================================
+One vectorised pool per training side, created ONCE and kept alive for the
+whole run. Opponents and curriculum levels are hot-swapped in place via
+VecEnv.env_method() — see SharedHoneypotEnv.set_scripted_opponent /
+load_rl_opponent / set_curriculum_level. This removes the 8-subprocess
+spawn (~5-10s on Windows) that v2 paid up to four times per iteration.
 
-This module provides:
-  make_parallel_envs(...)
-    Creates a SubprocVecEnv for training.  Falls back to DummyVecEnv
-    automatically if subprocess creation fails (e.g. in notebooks).
+SubprocVecEnv requires the env factory functions to be picklable. On
+Windows (spawn start method) that means module-level named functions whose
+captured state is plain data (str/int) — no model objects cross the
+process boundary; RL opponents are loaded from disk inside each worker.
 
-  make_diverse_envs(...)
-    Creates a VecEnv where each worker gets a DIFFERENT opponent sampled
-    from a pool of classes.  Prevents specialisation to a single style.
-    Used for levels 0 and 1 so the policy sees varied opponents every
-    rollout rather than 8 identical copies of one scripted agent.
-
-  make_eval_env(...)
-    Creates a single unwrapped env for evaluation (no vec wrapping needed).
-
-For level 2 (self-play), the opponent RL agent is saved to a temp path
-and loaded fresh inside each subprocess, avoiding CUDA serialization issues.
+Each worker:
+  • wraps the env in Monitor so info["episode"] exists (SB3's
+    ep_info_buffer and the live progress bar were silently empty without it)
+  • runs torch.set_num_threads(1) — 8 workers each spawning a full
+    intra-op thread pool oversubscribes the CPU and slows opponent
+    inference down
 """
 
-import os
-import random
 import logging
-from typing import Optional, Callable, List
+from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Picklable env factories ────────────────────────────────────────────────────
-# Each returns a zero-argument callable that creates one env instance.
-# ALL state captured in these closures must be picklable (str, int, class refs).
 
-def _make_scripted_env_fn(
+class ForwardingMonitor:
+    """Monitor subclass exposing the hot-swap API explicitly, so
+    VecEnv.env_method() doesn't go through gymnasium's deprecated
+    Wrapper.__getattr__ forwarding (which warns on every call)."""
+
+    # Defined lazily because stable_baselines3 must not be imported at
+    # module load time in the parent before spawn pickling.
+    _cls = None
+
+    @classmethod
+    def wrap(cls, env):
+        if cls._cls is None:
+            from stable_baselines3.common.monitor import Monitor
+
+            class _ForwardingMonitor(Monitor):
+                def set_scripted_opponent(self, name: str) -> str:
+                    return self.env.unwrapped.set_scripted_opponent(name)
+
+                def load_rl_opponent(self, path: str) -> bool:
+                    return self.env.unwrapped.load_rl_opponent(path)
+
+                def set_curriculum_level(self, level: int) -> int:
+                    return self.env.unwrapped.set_curriculum_level(level)
+
+            cls._cls = _ForwardingMonitor
+        return cls._cls(env)
+
+
+def _make_env_fn(
     mode:             str,
-    opponent_cls:     type,
     curriculum_level: int,
+    opponent_name:    Optional[str],
+    rank:             int,
 ) -> Callable:
-    """Factory for scripted-opponent envs (levels 0 and 1). Fully picklable."""
+    """Picklable factory for one worker env. opponent_name is a
+    baselines.OPPONENT_REGISTRY key, or None for the seeded random policy."""
     def _init():
+        import torch
+        torch.set_num_threads(1)
+
         from shared_honeypot_env import SharedHoneypotEnv
-        return SharedHoneypotEnv(
-            mode             = mode,
-            opponent_model   = opponent_cls(),
-            curriculum_level = curriculum_level,
-        )
+
+        env = SharedHoneypotEnv(mode=mode, curriculum_level=curriculum_level)
+        if opponent_name is not None:
+            env.set_scripted_opponent(opponent_name)
+        return ForwardingMonitor.wrap(env)
     return _init
 
 
-def _make_model_env_fn(
-    mode:             str,
-    opponent_path:    str,
-    curriculum_level: int,
-) -> Callable:
-    """
-    Factory for RL-opponent envs (level 2).
-    Loads the opponent from disk inside the subprocess so CUDA tensors
-    never cross the process boundary.
-    """
-    def _init():
-        from shared_honeypot_env import SharedHoneypotEnv
-        from sb3_contrib import RecurrentPPO
-
-        # Load opponent weights fresh inside this subprocess
-        try:
-            opp_model = RecurrentPPO.load(opponent_path, device="cpu")
-            # Wrap in a predict-compatible shim
-            class _ModelWrapper:
-                def __init__(self, m): self._m = m
-                def predict(self, obs, deterministic=True):
-                    import numpy as np
-                    a, _ = self._m.predict(obs, deterministic=deterministic)
-                    return int(np.asarray(a).flat[0]), None
-            opponent = _ModelWrapper(opp_model)
-        except Exception as e:
-            logger.warning("Subprocess: could not load opponent from %s: %s", opponent_path, e)
-            opponent = None   # falls back to random policy inside env
-
-        return SharedHoneypotEnv(
-            mode             = mode,
-            opponent_model   = opponent,
-            curriculum_level = curriculum_level,
-        )
-    return _init
-
-
-# ── Public API ─────────────────────────────────────────────────────────────────
-
-def make_diverse_envs(
+def make_vec_env(
     mode:             str,
     n_envs:           int,
     curriculum_level: int,
-    opponent_pool:    List[type],
+    opponent_names:   Optional[List[Optional[str]]] = None,
     use_subprocess:   bool = True,
 ):
     """
-    Create a VecEnv where EACH worker independently samples a different
-    opponent class from opponent_pool.
-
-    This is the primary anti-specialisation mechanism for levels 0 and 1.
-    With 8 workers and a pool of [ScriptedDefender, ExpertDefender], each
-    PPO rollout contains experience against multiple opponent styles in the
-    same gradient update, preventing the policy from memorising one opponent.
+    Create the persistent vectorised training pool for one side.
 
     Parameters
     ----------
     mode             : 'attacker' | 'defender'
-    n_envs           : number of parallel environments
+    n_envs           : number of parallel workers
     curriculum_level : 0 | 1 | 2
-    opponent_pool    : list of CLASS objects (not instances) to sample from
-    use_subprocess   : if True, attempt SubprocVecEnv; fall back to DummyVecEnv
+    opponent_names   : per-worker initial scripted opponent registry names
+                       (cycled if shorter than n_envs); None entries → seeded
+                       random policy. The trainer re-rolls the mix every
+                       iteration via env_method, so this is just the start.
+    use_subprocess   : if False, always use DummyVecEnv (debugging/notebooks)
 
-    Returns
-    -------
-    VecEnv (SubprocVecEnv or DummyVecEnv)
+    Env seeding note: per-worker seeds (seed + rank) are applied by SB3 —
+    RecurrentPPO(seed=...) calls VecEnv.seed(), which each SharedHoneypotEnv
+    honors through gymnasium's np_random.
     """
+    names = opponent_names or [None]
     env_fns = [
-        _make_scripted_env_fn(mode, random.choice(opponent_pool), curriculum_level)
-        for _ in range(n_envs)
+        _make_env_fn(mode, curriculum_level, names[i % len(names)], i)
+        for i in range(n_envs)
     ]
 
     if not use_subprocess or n_envs == 1:
@@ -129,90 +113,10 @@ def make_diverse_envs(
     try:
         from stable_baselines3.common.vec_env import SubprocVecEnv
         vec_env = SubprocVecEnv(env_fns, start_method="spawn")
-        logger.info(
-            "make_diverse_envs: SubprocVecEnv %d workers, mode=%s, level=%d, pool=%s",
-            n_envs, mode, curriculum_level,
-            [c.__name__ for c in opponent_pool],
-        )
+        logger.info("SubprocVecEnv ready: %d workers, mode=%s, level=%d",
+                    n_envs, mode, curriculum_level)
         return vec_env
     except Exception as e:
-        logger.warning("make_diverse_envs: SubprocVecEnv failed (%s), using DummyVecEnv", e)
+        logger.warning("SubprocVecEnv failed (%s), falling back to DummyVecEnv", e)
         from stable_baselines3.common.vec_env import DummyVecEnv
         return DummyVecEnv(env_fns)
-
-
-def make_parallel_envs(
-    mode:              str,
-    n_envs:            int,
-    curriculum_level:  int,
-    opponent=None,
-    opponent_path:     Optional[str] = None,
-    use_subprocess:    bool = True,
-):
-    """
-    Create a vectorised training environment.
-
-    Parameters
-    ----------
-    mode             : 'attacker' | 'defender'
-    n_envs           : number of parallel environments
-    curriculum_level : 0 | 1 | 2
-    opponent         : scripted agent instance (levels 0-1) OR RL agent (level 2)
-    opponent_path    : path to saved RL opponent .zip (level 2 only)
-    use_subprocess   : if False, always use DummyVecEnv (for debugging)
-
-    Returns
-    -------
-    VecEnv (SubprocVecEnv or DummyVecEnv)
-    """
-    from stable_baselines3.common.vec_env import DummyVecEnv
-
-    # Determine factory type based on opponent
-    is_scripted = opponent_path is None   # no path = scripted opponent
-
-    if is_scripted:
-        opponent_cls = type(opponent) if opponent is not None else _NullOpponent
-        env_fns = [
-            _make_scripted_env_fn(mode, opponent_cls, curriculum_level)
-            for _ in range(n_envs)
-        ]
-    else:
-        if not os.path.exists(opponent_path):
-            logger.warning("Opponent path not found: %s — using random policy", opponent_path)
-            env_fns = [
-                _make_scripted_env_fn(mode, _NullOpponent, curriculum_level)
-                for _ in range(n_envs)
-            ]
-        else:
-            env_fns = [
-                _make_model_env_fn(mode, opponent_path, curriculum_level)
-                for _ in range(n_envs)
-            ]
-
-    if not use_subprocess or n_envs == 1:
-        return DummyVecEnv(env_fns)
-
-    try:
-        from stable_baselines3.common.vec_env import SubprocVecEnv
-        vec_env = SubprocVecEnv(env_fns, start_method="spawn")
-        logger.info(
-            "SubprocVecEnv created: %d workers, mode=%s, level=%d",
-            n_envs, mode, curriculum_level,
-        )
-        return vec_env
-    except Exception as e:
-        logger.warning(
-            "SubprocVecEnv failed (%s), falling back to DummyVecEnv", e
-        )
-        return DummyVecEnv(env_fns)
-
-
-class _NullOpponent:
-    """
-    Random-policy fallback when no opponent is specified.
-    Uses a fixed pool of valid actions rather than the full 0-9 range
-    so it stays curriculum-compatible.
-    """
-    def __init__(self): pass
-    def predict(self, obs, deterministic=True):
-        return random.randint(0, 9), None
