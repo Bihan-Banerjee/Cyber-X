@@ -118,7 +118,7 @@ const PDFForensics = () => {
                 <div className="space-y-2">
                   {result.suspiciousFeatures.map((f, i) => (
                     <div key={i} className={`px-3 py-2 rounded border text-sm font-bold ${severityColor(f.severity)}`}>
-                      <span className="text-xs uppercase border px-1 py-0.5 rounded mr-2 ${severityColor(f.severity)}">{f.severity}</span>
+                      <span className={`text-xs uppercase border px-1 py-0.5 rounded mr-2 ${severityColor(f.severity)}`}>{f.severity}</span>
                       {f.feature}
                     </div>
                   ))}

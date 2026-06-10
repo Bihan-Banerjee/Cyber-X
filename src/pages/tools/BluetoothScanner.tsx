@@ -18,6 +18,9 @@ const BluetoothScanner = () => {
   const isWebBluetoothSupported = () =>
     typeof navigator !== "undefined" && "bluetooth" in navigator;
 
+  const isBrave = () =>
+    typeof (navigator as any).brave !== "undefined";
+
   const isChromiumBrowser = () => {
     const ua = navigator.userAgent;
     return /Chrome|Chromium|Edge/.test(ua) && !/Firefox|Safari\//.test(ua);
@@ -71,7 +74,13 @@ const BluetoothScanner = () => {
       if (err.name === "NotFoundError") {
         setInfo("No device selected. User cancelled the pairing dialog.");
       } else if (err.name === "SecurityError") {
-        setError("Bluetooth permission denied. Please allow Bluetooth access in browser settings.");
+        if (isBrave()) {
+          setError("Bluetooth blocked by Brave. Enable it at brave://flags/#enable-experimental-web-platform-features then relaunch.");
+        } else {
+          setError("Bluetooth permission denied. Please allow Bluetooth access in browser settings.");
+        }
+      } else if (err.name === "NotSupportedError") {
+        setError("Web Bluetooth is not supported or is disabled in this browser.");
       } else {
         setError(err.message || "Bluetooth scan failed.");
       }
@@ -86,7 +95,18 @@ const BluetoothScanner = () => {
     <CyberpunkCard title="BLUETOOTH SCANNER">
       <div className="space-y-6">
         {/* Browser Compatibility Warning */}
-        {!isChromiumBrowser() && (
+        {!isWebBluetoothSupported() && isBrave() && (
+          <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded text-yellow-400 text-sm">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-bold">Brave: Web Bluetooth is disabled by default</p>
+              <p className="text-xs mt-1">
+                Go to <span className="font-mono">brave://flags/#enable-experimental-web-platform-features</span>, enable the flag, and relaunch Brave.
+              </p>
+            </div>
+          </div>
+        )}
+        {!isWebBluetoothSupported() && !isBrave() && !isChromiumBrowser() && (
           <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded text-yellow-400 text-sm">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <div>

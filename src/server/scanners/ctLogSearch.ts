@@ -43,7 +43,8 @@ export async function searchCTLogs(
       throw new Error(`crt.sh returned status ${response.status}`);
     }
 
-    const data: any[] = await response.json();
+    const raw = await response.json();
+    const data: any[] = Array.isArray(raw) ? raw : [];
 
     // De-duplicate by certificate ID
     const seen = new Set<number>();
