@@ -37,6 +37,56 @@ import {
 import { logToolActivity, getRecentToolActivity } from '../utils/activityLogger.js';
 import { getSystemResources } from '../scanners/systemResources.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
+import { performSSLAnalysis } from '../scanners/sslAnalyzer.js';
+import { analyzeHTTPHeaders } from '../scanners/httpHeaderAnalyzer.js';
+import { searchCVE } from '../scanners/cveSearch.js';
+import { calculateFileHashes } from '../scanners/fileHashCalculator.js';
+import { enumerateUsername } from '../scanners/usernameEnumerator.js';
+import { lookupMalwareHash } from '../scanners/malwareHashLookup.js';
+import { performSQLiTest } from '../scanners/sqlInjectionTester.js';
+import { performXSSTest } from '../scanners/xssPayloadGenerator.js';
+import { performTechFingerprint } from '../scanners/websiteTechFingerprinter.js';
+import { generateWordlist } from '../scanners/wordlistGenerator.js';
+import { searchCTLogs } from '../scanners/ctLogSearch.js';
+import { checkEmailSpoofability } from '../scanners/spoofedEmailChecker.js';
+import { analyzeRobotsTxt } from '../scanners/robotsTxtAnalyzer.js';
+import { performSNMPScan } from '../scanners/snmpScanner.js';
+import { detectWAF } from '../scanners/wafDetector.js';
+import { discoverHosts } from '../scanners/arpHostDiscovery.js';
+import { generateHash } from '../scanners/bcryptGenerator.js';
+import { testOpenRedirect } from '../scanners/openRedirectFinder.js';
+import { crawlWebsite } from '../scanners/webCrawler.js';
+import { grabBanners } from '../scanners/bannerGrabber.js';
+import { analyzeLogs } from '../scanners/logAnalyzer.js';
+import { analyzePDF } from '../scanners/pdfForensics.js';
+import { analyzeBinary } from '../scanners/binaryAnalyzer.js';
+import { checkPhishingURL } from '../scanners/phishingURLDetector.js';
+import { sendHTTPRequest } from '../scanners/httpRequestBuilder.js';
+import { checkIPReputation } from '../scanners/ipReputationChecker.js';
+import { hexDump } from '../scanners/hexViewer.js';
+import { extractStrings } from '../scanners/stringExtractor.js';
+import { identifyFileType } from '../scanners/fileTypeIdentifier.js';
+import { searchExploitDB } from '../scanners/exploitDBSearch.js';
+import { analyzeCookies } from '../scanners/cookieAnalyzer.js';
+import { performSSRFTest } from '../scanners/ssrfTester.js';
+import { performTraceroute } from '../scanners/traceroute.js';
+import { lookupASN } from '../scanners/bgpASNLookup.js';
+import { lookupPhoneNumber } from '../scanners/phoneNumberOSINT.js';
+import { checkDomainReputation } from '../scanners/domainReputation.js';
+import { analyzeAPK } from '../scanners/apkAnalyzer.js';
+import { crackWifiHandshake } from '../scanners/wifiHandshakeCracker.js';
+import { performAzureBlobFinding } from '../scanners/azureBlobFinder.js';
+import { performGCPBucketFinding } from '../scanners/gcpBucketFinder.js';
+import { findGadgets } from '../scanners/ropGadgetFinder.js';
+import { checkDarkWeb } from '../scanners/darkWebChecker.js';
+import { analyzeDiskImage } from '../scanners/diskImageAnalyzer.js';
+import { performCompanyOSINT } from '../scanners/companyOSINT.js';
+import { testAWSMetadata } from '../scanners/awsMetadataTester.js';
+import { auditIAMPolicy } from '../scanners/cloudIAMAuditor.js';
+import { enumerateCloudAssets } from '../scanners/cloudAssetEnumerator.js';
+import { performSocialOSINT } from '../scanners/socialMediaOSINT.js';
+import { searchPastebins } from '../scanners/pastebinMonitor.js';
+import { checkCredentials } from '../scanners/credentialChecker.js';
 
 
 // ---------- Result Type Fixes ----------
@@ -1208,4 +1258,1182 @@ router.get('/system-resources', resourceLimiter, async (req, res) => {
   }
 });
 
+// ─── SSL Analyzer ───────────────────────────────────────────────────────────
+router.post('/ssl-analyzer', async (req, res) => {
+  try {
+    const { domain, timeoutMs = 10000 } = req.body;
+    if (!domain || typeof domain !== 'string') {
+      return res.status(400).json({ error: 'Invalid domain parameter' });
+    }
+    const cleanDomain = domain.replace(/^https?:\/\//, '').split('/')[0].toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: 'Invalid domain format' });
+    }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('SSL Analyzer', `Analysing TLS for ${cleanDomain}`, 'info');
+    const result = await performSSLAnalysis(cleanDomain, safeTimeout);
+    logToolActivity('SSL Analyzer', `Completed TLS analysis for ${cleanDomain}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('SSL Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'SSL analysis failed', message: error.message });
+  }
+});
+
+// ─── HTTP Header Analyzer ────────────────────────────────────────────────────
+router.post('/http-headers', async (req, res) => {
+  try {
+    const { url, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Invalid url parameter' });
+    }
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('HTTP Header Analyzer', `Analysing headers for ${url}`, 'info');
+    const result = await analyzeHTTPHeaders(url, safeTimeout);
+    logToolActivity('HTTP Header Analyzer', `Completed header analysis for ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('HTTP Header Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Header analysis failed', message: error.message });
+  }
+});
+
+// ─── CVE Search ──────────────────────────────────────────────────────────────
+const cveLimiter = createRateLimiter(10, 30000); // 10 req per 30s (NVD rate limit)
+router.post('/cve-search', cveLimiter, async (req, res) => {
+  try {
+    const { query, limit = 20 } = req.body;
+    if (!query || typeof query !== 'string' || query.trim().length < 2) {
+      return res.status(400).json({ error: 'Query must be at least 2 characters' });
+    }
+    logToolActivity('CVE Search', `Searching for: ${query}`, 'info');
+    const result = await searchCVE(query.trim(), limit);
+    logToolActivity('CVE Search', `Found ${result.results.length} CVEs`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('CVE Search', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'CVE search failed', message: error.message });
+  }
+});
+
+// ─── File Hash Calculator ────────────────────────────────────────────────────
+router.post('/file-hash', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    logToolActivity('File Hash Calculator', `Hashing: ${req.file.originalname}`, 'info');
+    const result = await calculateFileHashes(req.file.buffer, req.file.originalname);
+    logToolActivity('File Hash Calculator', `Hashes calculated for ${req.file.originalname}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('File Hash Calculator', `Hash calculation failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Hash calculation failed', message: error.message });
+  }
+});
+
+// ─── Username Enumerator ─────────────────────────────────────────────────────
+const usernameLimiter = createRateLimiter(10, 60000);
+router.post('/username-enum', usernameLimiter, async (req, res) => {
+  try {
+    const { username, platforms, timeoutMs = 8000 } = req.body;
+    if (!username || typeof username !== 'string' || username.trim().length < 1) {
+      return res.status(400).json({ error: 'Invalid username parameter' });
+    }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 20000);
+    logToolActivity('Username Enumerator', `Checking: ${username}`, 'info');
+    const result = await enumerateUsername(username.trim(), platforms, safeTimeout);
+    logToolActivity('Username Enumerator', `Found ${username} on ${result.found} platforms`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Username Enumerator', `Enumeration failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Username enumeration failed', message: error.message });
+  }
+});
+
+// ─── Malware Hash Lookup ─────────────────────────────────────────────────────
+router.post('/malware-hash', async (req, res) => {
+  try {
+    const { hash } = req.body;
+    if (!hash || typeof hash !== 'string') {
+      return res.status(400).json({ error: 'Invalid hash parameter' });
+    }
+    logToolActivity('Malware Hash Lookup', `Looking up hash`, 'info');
+    const result = await lookupMalwareHash(hash.trim());
+    logToolActivity('Malware Hash Lookup', `Lookup complete — found: ${result.found}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Malware Hash Lookup', `Lookup failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Hash lookup failed', message: error.message });
+  }
+});
+
+// ─── SQL Injection Tester ────────────────────────────────────────────────────
+const sqliLimiter = createRateLimiter(10, 60000);
+router.post('/sqli-test', sqliLimiter, async (req, res) => {
+  try {
+    const { url, parameter, method = 'GET', timeoutMs = 12000 } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Invalid url parameter' });
+    }
+    if (!parameter || typeof parameter !== 'string') {
+      return res.status(400).json({ error: 'Invalid parameter field' });
+    }
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeMethod = method === 'POST' ? 'POST' : 'GET';
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+    logToolActivity('SQL Injection Tester', `Testing ${url}`, 'info');
+    const result = await performSQLiTest(url, parameter, safeMethod, safeTimeout);
+    logToolActivity('SQL Injection Tester', `Test complete — vulnerable: ${result.vulnerable}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('SQL Injection Tester', `Test failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'SQLi test failed', message: error.message });
+  }
+});
+
+// ─── XSS Payload Generator ───────────────────────────────────────────────────
+const xssLimiter = createRateLimiter(10, 60000);
+router.post('/xss-test', xssLimiter, async (req, res) => {
+  try {
+    const { url, parameter, context = 'html', timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Invalid url parameter' });
+    }
+    if (!parameter || typeof parameter !== 'string') {
+      return res.status(400).json({ error: 'Invalid parameter field' });
+    }
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('XSS Payload Generator', `Testing ${url}`, 'info');
+    const result = await performXSSTest(url, parameter, context, safeTimeout);
+    logToolActivity('XSS Payload Generator', `Test complete — vulnerable: ${result.vulnerable}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('XSS Payload Generator', `Test failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'XSS test failed', message: error.message });
+  }
+});
+
+// ─── Website Tech Fingerprinter ──────────────────────────────────────────────
+router.post('/tech-fingerprint', async (req, res) => {
+  try {
+    const { url, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Invalid url parameter' });
+    }
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('Tech Fingerprinter', `Fingerprinting ${url}`, 'info');
+    const result = await performTechFingerprint(url, safeTimeout);
+    logToolActivity('Tech Fingerprinter', `Detected ${result.technologies.length} technologies`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Tech Fingerprinter', `Fingerprinting failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Tech fingerprinting failed', message: error.message });
+  }
+});
+
+// ─── Wordlist Generator ──────────────────────────────────────────────────────
+const wordlistLimiter = createRateLimiter(10, 60000);
+router.post('/wordlist-gen', wordlistLimiter, async (req, res) => {
+  try {
+    const {
+      keywords,
+      includeLeet = true,
+      includeYears = true,
+      includeSuffixes = true,
+      includeCapitalization = true,
+      minLength = 4,
+      maxLength = 20,
+      download = false,
+    } = req.body;
+
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return res.status(400).json({ error: 'keywords must be a non-empty array' });
+    }
+    if (keywords.length > 50) {
+      return res.status(400).json({ error: 'Maximum 50 keywords' });
+    }
+
+    logToolActivity('Wordlist Generator', `Generating for ${keywords.length} keywords`, 'info');
+    const result = generateWordlist(keywords, {
+      includeLeet,
+      includeYears,
+      includeSuffixes,
+      includeCapitalization,
+      minLength: Math.max(1, minLength),
+      maxLength: Math.min(128, maxLength),
+    });
+    logToolActivity('Wordlist Generator', `Generated ${result.count} words`, 'success');
+
+    if (download) {
+      res.setHeader('Content-Disposition', 'attachment; filename="wordlist.txt"');
+      res.setHeader('Content-Type', 'text/plain');
+      res.send(result.words.join('\n'));
+    } else {
+      res.json(result);
+    }
+  } catch (error: any) {
+    logToolActivity('Wordlist Generator', `Generation failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Wordlist generation failed', message: error.message });
+  }
+});
+
+// ─── CT Log Search ───────────────────────────────────────────────────────────
+router.post('/ct-search', async (req, res) => {
+  try {
+    const { domain, includeSubdomains = true, limit = 100 } = req.body;
+    if (!domain || typeof domain !== 'string') {
+      return res.status(400).json({ error: 'Invalid domain parameter' });
+    }
+    const cleanDomain = domain.replace(/^https?:\/\//, '').split('/')[0].toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: 'Invalid domain format' });
+    }
+    const safeLimit = Math.min(Math.max(limit, 1), 500);
+    logToolActivity('CT Log Search', `Searching CT logs for ${cleanDomain}`, 'info');
+    const result = await searchCTLogs(cleanDomain, includeSubdomains, safeLimit);
+    logToolActivity('CT Log Search', `Found ${result.certificates.length} certificates`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('CT Log Search', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'CT log search failed', message: error.message });
+  }
+});
+
+// ─── Spoofed Email Checker ───────────────────────────────────────────────────
+router.post('/email-spoof-check', async (req, res) => {
+  try {
+    const { domain } = req.body;
+    if (!domain || typeof domain !== 'string') {
+      return res.status(400).json({ error: 'Invalid domain parameter' });
+    }
+    const cleanDomain = domain.replace(/^https?:\/\//, '').split('/')[0].toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: 'Invalid domain format' });
+    }
+    logToolActivity('Spoofed Email Checker', `Checking ${cleanDomain}`, 'info');
+    const result = await checkEmailSpoofability(cleanDomain);
+    logToolActivity('Spoofed Email Checker', `Check complete — spoofable: ${result.spoofable}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Spoofed Email Checker', `Check failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Email spoof check failed', message: error.message });
+  }
+});
+
+// IP Reputation
+router.post('/ip-reputation', async (req, res) => {
+  try {
+    const { ip } = req.body;
+    if (!ip || typeof ip !== 'string') return res.status(400).json({ error: 'Invalid IP parameter' });
+    const cleanIP = ip.trim();
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(cleanIP)) return res.status(400).json({ error: 'Invalid IP format' });
+    logToolActivity('IP Reputation Checker', `Checking reputation for ${cleanIP}`, 'info');
+    const result = await checkIPReputation(cleanIP);
+    logToolActivity('IP Reputation Checker', `Completed reputation check for ${cleanIP}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('IP Reputation Checker', `Check failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Reputation check failed', message: error.message });
+  }
+});
+
+// Hex Viewer
+router.post('/hex-view', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    logToolActivity('Hex Viewer', `Processing file: ${req.file.originalname}`, 'info');
+    const result = await hexDump(req.file.buffer, req.file.originalname);
+    logToolActivity('Hex Viewer', `Completed hex dump for ${req.file.originalname}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Hex Viewer', `Processing failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Hex dump failed', message: error.message });
+  }
+});
+
+// String Extractor
+router.post('/string-extract', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const minLength = Math.min(Math.max(parseInt(req.body.minLength) || 4, 1), 20);
+    logToolActivity('String Extractor', `Extracting strings from: ${req.file.originalname}`, 'info');
+    const result = await extractStrings(req.file.buffer, minLength);
+    logToolActivity('String Extractor', `Extracted strings from ${req.file.originalname}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('String Extractor', `Extraction failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'String extraction failed', message: error.message });
+  }
+});
+
+// File Type Identifier
+router.post('/file-type', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    logToolActivity('File Type Identifier', `Identifying: ${req.file.originalname}`, 'info');
+    const result = await identifyFileType(req.file.buffer, req.file.originalname);
+    logToolActivity('File Type Identifier', `Identified ${req.file.originalname}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('File Type Identifier', `Identification failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'File type identification failed', message: error.message });
+  }
+});
+
+// Exploit-DB Search
+const exploitLimiter = createRateLimiter(5, 60000);
+router.post('/exploit-search', exploitLimiter, async (req, res) => {
+  try {
+    const { query, platform, type, limit = 20 } = req.body;
+    if (!query || typeof query !== 'string') return res.status(400).json({ error: 'Invalid query' });
+    const safeLimit = Math.min(Math.max(parseInt(limit), 1), 50);
+    logToolActivity('Exploit-DB Search', `Searching for: ${query}`, 'info');
+    const result = await searchExploitDB(query.trim(), platform || '', type || '', safeLimit);
+    logToolActivity('Exploit-DB Search', `Found results for: ${query}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Exploit-DB Search', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Exploit search failed', message: error.message });
+  }
+});
+
+// Cookie Analyzer
+router.post('/cookie-analyze', async (req, res) => {
+  try {
+    const { url, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid URL' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('Cookie Analyzer', `Analyzing cookies for ${url}`, 'info');
+    const result = await analyzeCookies(url, safeTimeout);
+    logToolActivity('Cookie Analyzer', `Completed cookie analysis for ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Cookie Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Cookie analysis failed', message: error.message });
+  }
+});
+
+// SSRF Tester
+const ssrfLimiter = createRateLimiter(10, 60000);
+router.post('/ssrf-test', ssrfLimiter, async (req, res) => {
+  try {
+    const { url, parameter, timeoutMs = 10000 } = req.body;
+    if (!url || !parameter) return res.status(400).json({ error: 'URL and parameter are required' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('SSRF Tester', `Testing SSRF on ${url} param: ${parameter}`, 'info');
+    const result = await performSSRFTest(url, parameter, safeTimeout);
+    logToolActivity('SSRF Tester', `Completed SSRF test on ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('SSRF Tester', `Test failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'SSRF test failed', message: error.message });
+  }
+});
+
+// Traceroute
+router.post('/traceroute', async (req, res) => {
+  try {
+    const { target, maxHops = 30, timeoutMs = 30000 } = req.body;
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Invalid target' });
+    if (!isValidTarget(target)) return res.status(400).json({ error: 'Invalid target format' });
+    logToolActivity('Traceroute', `Tracing route to ${target}`, 'info');
+    const result = await performTraceroute(target, Math.min(maxHops, 30), Math.min(timeoutMs, 60000));
+    logToolActivity('Traceroute', `Completed traceroute to ${target}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Traceroute', `Traceroute failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Traceroute failed', message: error.message });
+  }
+});
+
+// BGP / ASN Lookup
+router.post('/asn-lookup', async (req, res) => {
+  try {
+    const { target } = req.body;
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Invalid target' });
+    logToolActivity('BGP/ASN Lookup', `Looking up: ${target}`, 'info');
+    const result = await lookupASN(target.trim());
+    logToolActivity('BGP/ASN Lookup', `Completed lookup for: ${target}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('BGP/ASN Lookup', `Lookup failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'ASN lookup failed', message: error.message });
+  }
+});
+
+// Phone OSINT
+router.post('/phone-lookup', async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber || typeof phoneNumber !== 'string') return res.status(400).json({ error: 'Invalid phone number' });
+    logToolActivity('Phone OSINT', `Looking up: ${phoneNumber}`, 'info');
+    const result = await lookupPhoneNumber(phoneNumber.trim());
+    logToolActivity('Phone OSINT', `Completed lookup for: ${phoneNumber}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Phone OSINT', `Lookup failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Phone lookup failed', message: error.message });
+  }
+});
+
+// Domain Reputation
+router.post('/domain-reputation', async (req, res) => {
+  try {
+    const { domain } = req.body;
+    if (!domain || typeof domain !== 'string') return res.status(400).json({ error: 'Invalid domain' });
+    const cleanDomain = domain.toLowerCase().trim().replace(/^https?:\/\//, '').split('/')[0];
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) return res.status(400).json({ error: 'Invalid domain format' });
+    logToolActivity('Domain Reputation', `Checking reputation for ${cleanDomain}`, 'info');
+    const result = await checkDomainReputation(cleanDomain);
+    logToolActivity('Domain Reputation', `Completed reputation check for ${cleanDomain}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Domain Reputation', `Check failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Domain reputation check failed', message: error.message });
+  }
+});
+
+// Robots.txt Analyzer
+router.post('/robots-analyze', async (req, res) => {
+  try {
+    const { domain, timeoutMs = 10000 } = req.body;
+    if (!domain || typeof domain !== 'string') return res.status(400).json({ error: 'Invalid domain' });
+    const cleanDomain = domain.toLowerCase().trim().replace(/^https?:\/\//, '').split('/')[0];
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) return res.status(400).json({ error: 'Invalid domain format' });
+    logToolActivity('Robots.txt Analyzer', `Analyzing robots.txt for ${cleanDomain}`, 'info');
+    const result = await analyzeRobotsTxt(cleanDomain, Math.min(timeoutMs, 30000));
+    logToolActivity('Robots.txt Analyzer', `Completed analysis for ${cleanDomain}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Robots.txt Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Robots.txt analysis failed', message: error.message });
+  }
+});
+
+// SNMP Scanner
+router.post('/snmp-scan', async (req, res) => {
+  try {
+    const { target, community = 'public', version = '2c', timeoutMs = 10000 } = req.body;
+    if (!target || !isValidTarget(target)) return res.status(400).json({ error: 'Invalid target' });
+    logToolActivity('SNMP Scanner', `Scanning ${target}`, 'info');
+    const result = await performSNMPScan(target, community, version, Math.min(timeoutMs, 30000));
+    logToolActivity('SNMP Scanner', `Completed scan of ${target}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('SNMP Scanner', `Scan failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'SNMP scan failed', message: error.message });
+  }
+});
+
+// WAF Detector
+router.post('/waf-detect', async (req, res) => {
+  try {
+    const { url, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid URL' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    logToolActivity('WAF Detector', `Detecting WAF for ${url}`, 'info');
+    const result = await detectWAF(url, Math.min(timeoutMs, 30000));
+    logToolActivity('WAF Detector', `Completed WAF detection for ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('WAF Detector', `Detection failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'WAF detection failed', message: error.message });
+  }
+});
+
+// Host Discovery
+router.post('/host-discovery', async (req, res) => {
+  try {
+    const { subnet, timeoutMs = 30000 } = req.body;
+    if (!subnet || typeof subnet !== 'string') return res.status(400).json({ error: 'Invalid subnet' });
+    if (!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(subnet.trim())) return res.status(400).json({ error: 'Invalid CIDR notation' });
+    logToolActivity('Host Discovery', `Scanning subnet ${subnet}`, 'info');
+    const result = await discoverHosts(subnet.trim(), Math.min(timeoutMs, 60000));
+    logToolActivity('Host Discovery', `Completed scan of ${subnet}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Host Discovery', `Scan failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Host discovery failed', message: error.message });
+  }
+});
+
+// Hash Generator (bcrypt)
+router.post('/hash-generate', async (req, res) => {
+  try {
+    const { input, algorithm = 'bcrypt', rounds = 10, verify } = req.body;
+    if (!input || typeof input !== 'string') return res.status(400).json({ error: 'Invalid input' });
+    if (input.length > 1000) return res.status(400).json({ error: 'Input too long' });
+    const safeRounds = Math.min(Math.max(parseInt(rounds), 10), 14);
+    const verifyStr = verify && typeof verify === 'string' ? verify.trim() : undefined;
+    logToolActivity('Hash Generator', `${verifyStr ? 'Verifying' : 'Generating'} ${algorithm} hash`, 'info');
+    const result = await generateHash(input, algorithm, safeRounds, verifyStr);
+    logToolActivity('Hash Generator', `${verifyStr ? 'Verified' : 'Generated'} ${algorithm} hash`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Hash Generator', `Generation failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Hash generation failed', message: error.message });
+  }
+});
+
+// Open Redirect Finder
+router.post('/open-redirect', async (req, res) => {
+  try {
+    const { url, parameter, timeoutMs = 10000 } = req.body;
+    if (!url || !parameter) return res.status(400).json({ error: 'URL and parameter are required' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    logToolActivity('Open Redirect Finder', `Testing ${url} param: ${parameter}`, 'info');
+    const result = await testOpenRedirect(url, parameter, Math.min(timeoutMs, 30000));
+    logToolActivity('Open Redirect Finder', `Completed test on ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Open Redirect Finder', `Test failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Open redirect test failed', message: error.message });
+  }
+});
+
+// Web Crawler
+const crawlLimiter = createRateLimiter(5, 60000);
+router.post('/web-crawl', crawlLimiter, async (req, res) => {
+  try {
+    const { url, maxDepth = 3, maxPages = 50, timeoutMs = 30000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid URL' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    logToolActivity('Web Crawler', `Crawling ${url}`, 'info');
+    const result = await crawlWebsite(url, Math.min(maxDepth, 5), Math.min(maxPages, 100), Math.min(timeoutMs, 60000));
+    logToolActivity('Web Crawler', `Completed crawl of ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Web Crawler', `Crawl failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Web crawl failed', message: error.message });
+  }
+});
+
+// Banner Grabber
+router.post('/banner-grab', async (req, res) => {
+  try {
+    const { target, ports = [21,22,23,25,80,110,143,443,8080], timeoutMs = 10000 } = req.body;
+    if (!target || !isValidTarget(target)) return res.status(400).json({ error: 'Invalid target' });
+    const safePorts = (Array.isArray(ports) ? ports : String(ports).split(',').map(Number)).filter((p: number) => p > 0 && p <= 65535).slice(0, 20);
+    logToolActivity('Banner Grabber', `Grabbing banners from ${target}`, 'info');
+    const result = await grabBanners(target, safePorts, Math.min(timeoutMs, 30000));
+    logToolActivity('Banner Grabber', `Completed banner grab from ${target}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Banner Grabber', `Grab failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Banner grab failed', message: error.message });
+  }
+});
+
+// Log Analyzer
+router.post('/log-analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const logType = req.body.logType || 'auto';
+    logToolActivity('Log Analyzer', `Analyzing ${logType} log: ${req.file.originalname}`, 'info');
+    const result = await analyzeLogs(req.file.buffer, req.file.originalname, logType);
+    logToolActivity('Log Analyzer', `Completed log analysis`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Log Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Log analysis failed', message: error.message });
+  }
+});
+
+// PDF Forensics
+router.post('/pdf-forensics', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    logToolActivity('PDF Forensics', `Analyzing: ${req.file.originalname}`, 'info');
+    const result = await analyzePDF(req.file.buffer, req.file.originalname);
+    logToolActivity('PDF Forensics', `Completed PDF analysis`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('PDF Forensics', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'PDF forensics failed', message: error.message });
+  }
+});
+
+// Binary Analyzer
+router.post('/binary-analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    logToolActivity('Binary Analyzer', `Analyzing: ${req.file.originalname}`, 'info');
+    const result = await analyzeBinary(req.file.buffer, req.file.originalname);
+    logToolActivity('Binary Analyzer', `Completed binary analysis`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Binary Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Binary analysis failed', message: error.message });
+  }
+});
+
+// Phishing URL Detector
+router.post('/phishing-check', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid URL' });
+    logToolActivity('Phishing URL Detector', `Checking: ${url}`, 'info');
+    const result = await checkPhishingURL(url.trim());
+    logToolActivity('Phishing URL Detector', `Completed check for: ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Phishing URL Detector', `Check failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Phishing check failed', message: error.message });
+  }
+});
+
+// HTTP Request Builder
+router.post('/http-request', async (req, res) => {
+  try {
+    const { method = 'GET', url, headers = {}, body: reqBody = '', timeoutMs = 15000, followRedirects = true } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid URL' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    logToolActivity('HTTP Request Builder', `${method} ${url}`, 'info');
+    const result = await sendHTTPRequest(method, url, headers, reqBody, Math.min(timeoutMs, 30000), followRedirects);
+    logToolActivity('HTTP Request Builder', `Completed ${method} to ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('HTTP Request Builder', `Request failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'HTTP request failed', message: error.message });
+  }
+});
+
+// APK Analyzer
+router.post('/apk-analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    logToolActivity('APK Analyzer', `Analyzing: ${req.file.originalname}`, 'info');
+    const result = await analyzeAPK(req.file.buffer, req.file.originalname);
+    logToolActivity('APK Analyzer', `Completed APK analysis`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('APK Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'APK analysis failed', message: error.message });
+  }
+});
+
+// WiFi Handshake Cracker
+const wifiLimiter = createRateLimiter(3, 60000);
+router.post('/wifi-crack', wifiLimiter, async (req, res) => {
+  try {
+    const { ssid, wordlist, targetPMK } = req.body;
+    if (!ssid || typeof ssid !== 'string' || !ssid.trim()) {
+      return res.status(400).json({ error: 'SSID is required' });
+    }
+    if (!Array.isArray(wordlist) || wordlist.length === 0) {
+      return res.status(400).json({ error: 'wordlist must be a non-empty array of strings' });
+    }
+    const safeWordlist = wordlist.slice(0, 1000).map(String);
+    logToolActivity('WiFi Cracker', `Cracking handshake for SSID: ${ssid.trim()}`, 'info');
+    const result = await crackWifiHandshake(ssid.trim(), safeWordlist, targetPMK?.trim() || undefined);
+    logToolActivity('WiFi Cracker', `Completed crack attempt`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('WiFi Cracker', `Crack failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'WiFi crack failed', message: error.message });
+  }
+});
+
+// Azure Blob Finder
+router.post('/azure-blob-find', async (req, res) => {
+  try {
+    const { keyword, timeoutMs = 15000 } = req.body;
+    if (!keyword || typeof keyword !== 'string') return res.status(400).json({ error: 'Invalid keyword' });
+    logToolActivity('Azure Blob Finder', `Searching for: ${keyword}`, 'info');
+    const result = await performAzureBlobFinding(keyword.trim());
+    logToolActivity('Azure Blob Finder', `Completed search for: ${keyword}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Azure Blob Finder', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Azure blob search failed', message: error.message });
+  }
+});
+
+// GCP Bucket Finder
+router.post('/gcp-bucket-find', async (req, res) => {
+  try {
+    const { keyword, timeoutMs = 15000 } = req.body;
+    if (!keyword || typeof keyword !== 'string') return res.status(400).json({ error: 'Invalid keyword' });
+    logToolActivity('GCP Bucket Finder', `Searching for: ${keyword}`, 'info');
+    const result = await performGCPBucketFinding(keyword.trim());
+    logToolActivity('GCP Bucket Finder', `Completed search for: ${keyword}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('GCP Bucket Finder', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'GCP bucket search failed', message: error.message });
+  }
+});
+
+// ROP Gadget Finder
+router.post('/rop-gadgets', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const arch = req.body.arch || 'x64';
+    logToolActivity('ROP Gadget Finder', `Finding gadgets in: ${req.file.originalname}`, 'info');
+    const result = await findGadgets(req.file.buffer, req.file.originalname, arch);
+    logToolActivity('ROP Gadget Finder', `Completed gadget search`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('ROP Gadget Finder', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'ROP gadget search failed', message: error.message });
+  }
+});
+
+// Dark Web Checker
+router.post('/dark-web-check', async (req, res) => {
+  try {
+    const { query, type = 'keyword' } = req.body;
+    if (!query || typeof query !== 'string') return res.status(400).json({ error: 'Invalid query' });
+    logToolActivity('Dark Web Checker', `Searching for: ${query}`, 'info');
+    const result = await checkDarkWeb(query.trim(), type);
+    logToolActivity('Dark Web Checker', `Completed dark web search`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Dark Web Checker', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Dark web check failed', message: error.message });
+  }
+});
+
+// Disk Image Analyzer
+router.post('/disk-analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    logToolActivity('Disk Image Analyzer', `Analyzing: ${req.file.originalname}`, 'info');
+    const result = await analyzeDiskImage(req.file.buffer, req.file.originalname);
+    logToolActivity('Disk Image Analyzer', `Completed disk analysis`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Disk Image Analyzer', `Analysis failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Disk analysis failed', message: error.message });
+  }
+});
+
+// Company OSINT
+router.post('/company-osint', async (req, res) => {
+  try {
+    const { company, domain } = req.body;
+    if (!company || typeof company !== 'string') return res.status(400).json({ error: 'Invalid company name' });
+    logToolActivity('Company OSINT', `Running OSINT for: ${company}`, 'info');
+    const result = await performCompanyOSINT(company.trim(), domain?.trim());
+    logToolActivity('Company OSINT', `Completed OSINT for: ${company}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Company OSINT', `OSINT failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Company OSINT failed', message: error.message });
+  }
+});
+
+// AWS Metadata Tester
+router.post('/aws-metadata', async (req, res) => {
+  try {
+    const { url, parameter, timeoutMs = 10000 } = req.body;
+    if (!url || !parameter) return res.status(400).json({ error: 'URL and parameter required' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    logToolActivity('AWS Metadata Tester', `Testing ${url}`, 'info');
+    const result = await testAWSMetadata(url, parameter, Math.min(timeoutMs, 30000));
+    logToolActivity('AWS Metadata Tester', `Completed test on ${url}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('AWS Metadata Tester', `Test failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'AWS metadata test failed', message: error.message });
+  }
+});
+
+// Cloud IAM Auditor
+router.post('/iam-audit', async (req, res) => {
+  try {
+    const { policy } = req.body;
+    if (!policy || typeof policy !== 'string') return res.status(400).json({ error: 'Invalid policy' });
+    try { JSON.parse(policy); } catch { return res.status(400).json({ error: 'Invalid JSON policy' }); }
+    logToolActivity('Cloud IAM Auditor', `Auditing IAM policy`, 'info');
+    const result = await auditIAMPolicy(policy);
+    logToolActivity('Cloud IAM Auditor', `Completed IAM audit`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Cloud IAM Auditor', `Audit failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'IAM audit failed', message: error.message });
+  }
+});
+
+// Cloud Asset Enumerator
+router.post('/cloud-assets', async (req, res) => {
+  try {
+    const { domain, organization } = req.body;
+    if (!domain && !organization) return res.status(400).json({ error: 'Domain or organization required' });
+    logToolActivity('Cloud Asset Enumerator', `Enumerating assets for: ${domain || organization}`, 'info');
+    const result = await enumerateCloudAssets(domain || '', organization || domain || '');
+    logToolActivity('Cloud Asset Enumerator', `Completed enumeration`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Cloud Asset Enumerator', `Enumeration failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Cloud asset enumeration failed', message: error.message });
+  }
+});
+
+// Social Media OSINT
+router.post('/social-osint', async (req, res) => {
+  try {
+    const { handle, platforms } = req.body;
+    if (!handle || typeof handle !== 'string') return res.status(400).json({ error: 'Invalid handle' });
+    logToolActivity('Social Media OSINT', `Searching for: ${handle}`, 'info');
+    const result = await performSocialOSINT(handle.trim(), platforms || []);
+    logToolActivity('Social Media OSINT', `Completed OSINT for: ${handle}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Social Media OSINT', `OSINT failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Social OSINT failed', message: error.message });
+  }
+});
+
+// Pastebin Monitor
+router.post('/pastebin-search', async (req, res) => {
+  try {
+    const { query, type = 'keyword' } = req.body;
+    if (!query || typeof query !== 'string') return res.status(400).json({ error: 'Invalid query' });
+    logToolActivity('Pastebin Monitor', `Searching for: ${query}`, 'info');
+    const result = await searchPastebins(query.trim(), type);
+    logToolActivity('Pastebin Monitor', `Completed search`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Pastebin Monitor', `Search failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Pastebin search failed', message: error.message });
+  }
+});
+
+// Credential Checker — HEAVILY rate-limited
+const credLimiter = createRateLimiter(5, 60000);
+router.post('/credential-check', credLimiter, async (req, res) => {
+  try {
+    const { credentials, target, loginPath = '/login' } = req.body;
+    if (!credentials || !Array.isArray(credentials) || credentials.length === 0) return res.status(400).json({ error: 'Invalid credentials' });
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Invalid target' });
+    try { new URL(target); } catch { return res.status(400).json({ error: 'Invalid target URL' }); }
+    if (credentials.length > 50) return res.status(400).json({ error: 'Maximum 50 credential pairs' });
+    logToolActivity('Credential Checker', `Testing ${credentials.length} credentials against ${target}`, 'warning');
+    const result = await checkCredentials(credentials, target, loginPath, 10000);
+    logToolActivity('Credential Checker', `Completed credential check against ${target}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    logToolActivity('Credential Checker', `Check failed: ${error.message}`, 'warning');
+    res.status(500).json({ error: 'Credential check failed', message: error.message });
+  }
+});
+
 export default router;
+
+/* ─── REMOVED DUPLICATE ROUTES (commented out) ──────────────────────────────
+router.post('/robots-analyze', async (req, res) => {
+  try {
+    const { domain, timeoutMs = 10000 } = req.body;
+    if (!domain || typeof domain !== 'string') return res.status(400).json({ error: 'Invalid domain parameter' });
+    const cleanDomain = domain.replace(/^https?:\/\//, '').split('/')[0].toLowerCase().trim();
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) return res.status(400).json({ error: 'Invalid domain format' });
+    logToolActivity('Robots.txt Analyzer', `Analyzing ${cleanDomain}`, 'info');
+    const result = await analyzeRobotsTxt(cleanDomain, timeoutMs);
+    logToolActivity('Robots.txt Analyzer', `Done — ${result.interestingPaths.length} interesting paths`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Robots.txt analysis failed', message: error.message });
+  }
+});
+
+// ─── SNMP Scanner ────────────────────────────────────────────────────────────
+router.post('/snmp-scan', async (req, res) => {
+  try {
+    const { target, community = 'public', version = '2c', timeoutMs = 10000 } = req.body;
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Invalid target parameter' });
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('SNMP Scanner', `Scanning ${target}`, 'info');
+    const result = await performSNMPScan(target, community, version, safeTimeout);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'SNMP scan failed', message: error.message });
+  }
+});
+
+// ─── WAF Detector ────────────────────────────────────────────────────────────
+router.post('/waf-detect', async (req, res) => {
+  try {
+    const { url, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid url parameter' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('WAF Detector', `Detecting WAF for ${url}`, 'info');
+    const result = await detectWAF(url, safeTimeout);
+    logToolActivity('WAF Detector', `Done — WAF detected: ${result.wafDetected}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'WAF detection failed', message: error.message });
+  }
+});
+
+// ─── ARP Host Discovery ──────────────────────────────────────────────────────
+router.post('/host-discovery', async (req, res) => {
+  try {
+    const { subnet, timeoutMs = 15000 } = req.body;
+    if (!subnet || typeof subnet !== 'string') return res.status(400).json({ error: 'Invalid subnet parameter' });
+    if (!/^[\d./]+$/.test(subnet)) return res.status(400).json({ error: 'Invalid subnet format' });
+    const safeTimeout = Math.min(Math.max(timeoutMs, 5000), 60000);
+    logToolActivity('Host Discovery', `Scanning ${subnet}`, 'info');
+    const result = await discoverHosts(subnet, safeTimeout);
+    logToolActivity('Host Discovery', `Found ${result.hostsUp} hosts`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Host discovery failed', message: error.message });
+  }
+});
+
+// ─── Hash Generator / Verifier ───────────────────────────────────────────────
+router.post('/hash-generate', async (req, res) => {
+  try {
+    const { input, algorithm, rounds, verify } = req.body;
+    if (!input || typeof input !== 'string') return res.status(400).json({ error: 'Invalid input parameter' });
+    if (!algorithm || typeof algorithm !== 'string') return res.status(400).json({ error: 'Invalid algorithm parameter' });
+    logToolActivity('Hash Generator', `Generating ${algorithm} hash`, 'info');
+    const result = await generateHash(input, algorithm, rounds, verify);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Hash generation failed', message: error.message });
+  }
+});
+
+// ─── Open Redirect Finder ────────────────────────────────────────────────────
+const openRedirectLimiter = createRateLimiter(10, 60000);
+router.post('/open-redirect', openRedirectLimiter, async (req, res) => {
+  try {
+    const { url, parameter, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid url parameter' });
+    if (!parameter || typeof parameter !== 'string') return res.status(400).json({ error: 'Invalid parameter field' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('Open Redirect Finder', `Testing ${url}`, 'info');
+    const result = await testOpenRedirect(url, parameter, safeTimeout);
+    logToolActivity('Open Redirect Finder', `Done — vulnerable: ${result.vulnerable}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Open redirect test failed', message: error.message });
+  }
+});
+
+// ─── Web Crawler ─────────────────────────────────────────────────────────────
+router.post('/web-crawl', async (req, res) => {
+  try {
+    const { url, maxDepth = 3, maxPages = 50, timeoutMs = 60000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid url parameter' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 10000), 120000);
+    const safeDepth = Math.min(Math.max(maxDepth, 1), 10);
+    const safePages = Math.min(Math.max(maxPages, 5), 200);
+    logToolActivity('Web Crawler', `Crawling ${url}`, 'info');
+    const result = await crawlWebsite(url, safeDepth, safePages, safeTimeout);
+    logToolActivity('Web Crawler', `Crawled ${result.totalPages} pages`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Web crawl failed', message: error.message });
+  }
+});
+
+// ─── Banner Grabber ──────────────────────────────────────────────────────────
+router.post('/banner-grab', async (req, res) => {
+  try {
+    const { target, ports = [21, 22, 23, 25, 80, 110, 143, 443, 8080], timeoutMs = 10000 } = req.body;
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Invalid target parameter' });
+    if (!Array.isArray(ports) || ports.length > 50) return res.status(400).json({ error: 'Ports must be an array of max 50 ports' });
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('Banner Grabber', `Grabbing banners from ${target}`, 'info');
+    const result = await grabBanners(target, ports, safeTimeout);
+    logToolActivity('Banner Grabber', `Done — ${result.results.filter((r: any) => r.open).length} open ports`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Banner grab failed', message: error.message });
+  }
+});
+
+// ─── Log Analyzer ────────────────────────────────────────────────────────────
+router.post('/log-analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No log file uploaded' });
+    const logType = req.body.logType || 'auto';
+    logToolActivity('Log Analyzer', `Analyzing ${req.file.originalname}`, 'info');
+    const result = analyzeLogs(req.file.buffer, req.file.originalname, logType);
+    logToolActivity('Log Analyzer', `Analysis complete — ${result.anomalies.length} anomalies`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Log analysis failed', message: error.message });
+  }
+});
+
+// ─── PDF Forensics ───────────────────────────────────────────────────────────
+router.post('/pdf-forensics', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' });
+    logToolActivity('PDF Forensics', `Analyzing ${req.file.originalname}`, 'info');
+    const result = analyzePDF(req.file.buffer, req.file.originalname);
+    logToolActivity('PDF Forensics', `Analysis complete — ${result.suspiciousFeatures.length} suspicious features`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'PDF forensics failed', message: error.message });
+  }
+});
+
+// ─── Binary Analyzer ────────────────────────────────────────────────────────
+router.post('/binary-analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No binary file uploaded' });
+    logToolActivity('Binary Analyzer', `Analyzing ${req.file.originalname}`, 'info');
+    const result = analyzeBinary(req.file.buffer, req.file.originalname);
+    logToolActivity('Binary Analyzer', `Analysis complete — format: ${result.format}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Binary analysis failed', message: error.message });
+  }
+});
+
+// ─── Phishing URL Detector ───────────────────────────────────────────────────
+router.post('/phishing-check', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid url parameter' });
+    logToolActivity('Phishing Detector', `Checking ${url}`, 'info');
+    const result = checkPhishingURL(url);
+    logToolActivity('Phishing Detector', `Verdict: ${result.verdict} (score ${result.score})`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Phishing check failed', message: error.message });
+  }
+});
+
+// ─── HTTP Request Builder ────────────────────────────────────────────────────
+const httpRequestLimiter = createRateLimiter(30, 60000);
+router.post('/http-request', httpRequestLimiter, async (req, res) => {
+  try {
+    const { method = 'GET', url, headers = {}, body = '', timeoutMs = 15000, followRedirects = true } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid url parameter' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 30000);
+    logToolActivity('HTTP Request Builder', `${method} ${url}`, 'info');
+    const result = await sendHTTPRequest(method, url, headers, body, safeTimeout, followRedirects);
+    logToolActivity('HTTP Request Builder', `Response: ${result.statusCode} in ${result.responseTime}ms`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'HTTP request failed', message: error.message });
+  }
+});
+
+// ─── Company OSINT ───────────────────────────────────────────────────────────
+const osintLimiter = createRateLimiter(5, 60000);
+router.post('/company-osint', osintLimiter, async (req, res) => {
+  try {
+    const { company, domain } = req.body;
+    if (!company || typeof company !== 'string') return res.status(400).json({ error: 'Invalid company parameter' });
+    logToolActivity('Company OSINT', `Gathering intel on "${company}"`, 'info');
+    const result = await performCompanyOSINT(company, domain);
+    logToolActivity('Company OSINT', `Intel gathered`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Company OSINT failed', message: error.message });
+  }
+});
+
+// ─── AWS Metadata Tester ─────────────────────────────────────────────────────
+const awsMetaLimiter = createRateLimiter(5, 60000);
+router.post('/aws-metadata', awsMetaLimiter, async (req, res) => {
+  try {
+    const { url, parameter, timeoutMs = 10000 } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'Invalid url parameter' });
+    if (!parameter || typeof parameter !== 'string') return res.status(400).json({ error: 'Invalid parameter field' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    const safeTimeout = Math.min(Math.max(timeoutMs, 3000), 30000);
+    logToolActivity('AWS Metadata Tester', `Testing ${url}`, 'info');
+    const result = await testAWSMetadata(url, parameter, safeTimeout);
+    logToolActivity('AWS Metadata Tester', `Done — vulnerable: ${result.vulnerable}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'AWS metadata test failed', message: error.message });
+  }
+});
+
+// ─── Cloud IAM Auditor ───────────────────────────────────────────────────────
+router.post('/iam-audit', async (req, res) => {
+  try {
+    const { policy } = req.body;
+    if (!policy || typeof policy !== 'string') return res.status(400).json({ error: 'Invalid policy parameter' });
+    logToolActivity('IAM Auditor', `Auditing policy`, 'info');
+    const result = auditIAMPolicy(policy);
+    logToolActivity('IAM Auditor', `Audit complete — ${result.issues.length} issues, score: ${result.score}`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'IAM audit failed', message: error.message });
+  }
+});
+
+// ─── Cloud Asset Enumerator ──────────────────────────────────────────────────
+const cloudAssetLimiter = createRateLimiter(5, 60000);
+router.post('/cloud-assets', cloudAssetLimiter, async (req, res) => {
+  try {
+    const { domain, organization } = req.body;
+    if (!domain || typeof domain !== 'string') return res.status(400).json({ error: 'Invalid domain parameter' });
+    logToolActivity('Cloud Asset Enumerator', `Enumerating assets for ${domain}`, 'info');
+    const result = await enumerateCloudAssets(domain, organization);
+    logToolActivity('Cloud Asset Enumerator', `Found ${result.assets.filter((a: any) => a.status === 'public').length} public assets`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Cloud asset enumeration failed', message: error.message });
+  }
+});
+
+// ─── Social Media OSINT ──────────────────────────────────────────────────────
+const socialLimiter = createRateLimiter(10, 60000);
+router.post('/social-osint', socialLimiter, async (req, res) => {
+  try {
+    const { handle, platforms } = req.body;
+    if (!handle || typeof handle !== 'string') return res.status(400).json({ error: 'Invalid handle parameter' });
+    logToolActivity('Social Media OSINT', `Searching for "${handle}"`, 'info');
+    const result = await performSocialOSINT(handle, platforms);
+    logToolActivity('Social Media OSINT', `Found ${result.profiles.filter((p: any) => p.found).length} profiles`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Social media OSINT failed', message: error.message });
+  }
+});
+
+// ─── Pastebin Monitor ────────────────────────────────────────────────────────
+const pastebinLimiter = createRateLimiter(10, 60000);
+router.post('/pastebin-search', pastebinLimiter, async (req, res) => {
+  try {
+    const { query, type = 'keyword' } = req.body;
+    if (!query || typeof query !== 'string' || query.trim().length < 2) return res.status(400).json({ error: 'Query must be at least 2 characters' });
+    logToolActivity('Pastebin Monitor', `Searching for "${query}"`, 'info');
+    const result = await searchPastebins(query.trim(), type);
+    logToolActivity('Pastebin Monitor', `Found ${result.total} results`, 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Pastebin search failed', message: error.message });
+  }
+});
+
+// ─── Credential Checker ──────────────────────────────────────────────────────
+const credLimiter = createRateLimiter(5, 60000);
+router.post('/credential-check', credLimiter, async (req, res) => {
+  try {
+    const { credentials, target, loginPath = '/login', timeoutMs = 5000 } = req.body;
+    if (!credentials || !Array.isArray(credentials) || credentials.length === 0) return res.status(400).json({ error: 'Invalid credentials parameter' });
+    if (!target || typeof target !== 'string') return res.status(400).json({ error: 'Invalid target parameter' });
+    try { new URL(target); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+    if (credentials.length > 20) return res.status(400).json({ error: 'Maximum 20 credentials per request' });
+    const safeTimeout = Math.min(Math.max(timeoutMs, 1000), 15000);
+    logToolActivity('Credential Checker', `Testing ${credentials.length} credentials`, 'warning');
+    const result = await checkCredentials(credentials, target, loginPath, safeTimeout);
+    logToolActivity('Credential Checker', `Done — ${result.found} valid credentials`, result.found > 0 ? 'warning' : 'success');
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Credential check failed', message: error.message });
+  }
+});
+*/
