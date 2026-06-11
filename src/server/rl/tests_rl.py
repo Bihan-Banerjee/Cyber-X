@@ -472,17 +472,24 @@ def repeatable_actions_are_not_farmable():
     assert att_spam(A_COLLECT, lambda e: e.true_state.update(stage=STAGE_PRIVILEGED)) <= 3.5, \
         "collect_data re-pays (should fire once ~+3 then waste)"
 
-    # Defender rate_limit spam vs an idle attacker must be non-positive
-    env = SharedHoneypotEnv(mode="defender", curriculum_level=2,
-                            opponent_model=IdleAttacker())
-    env.reset(seed=2)
-    total = 0.0
-    for _ in range(env.max_steps):
-        _, r, term, trunc, _ = env.step(D_RATE_LIMIT)
-        total += r
-        if term or trunc:
-            break
-    assert total <= 0.0, f"rate_limit spam is farmable (return {total:.1f})"
+    # Defender spam vs an idle attacker must be non-positive for every
+    # repeatable action (rate_limit, investigate, threat_hunt). Evidence-
+    # building actions are headroom-capped, so once evidence saturates (or
+    # there's nothing to detect) they stop paying.
+    from shared_honeypot_env import D_INVESTIGATE, D_THREAT_HUNT
+    for act, label in ((D_RATE_LIMIT, "rate_limit"),
+                       (D_INVESTIGATE, "investigate"),
+                       (D_THREAT_HUNT, "threat_hunt")):
+        env = SharedHoneypotEnv(mode="defender", curriculum_level=2,
+                                opponent_model=IdleAttacker())
+        env.reset(seed=2)
+        total = 0.0
+        for _ in range(env.max_steps):
+            _, r, term, trunc, _ = env.step(act)
+            total += r
+            if term or trunc:
+                break
+        assert total <= 0.0, f"{label} spam is farmable (return {total:.1f})"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -82,10 +82,13 @@ A_EXFILTRATE     = 11
 A_IMPACT         = 12
 A_WAIT           = 13
 
-# Actions that touch live systems and can therefore trip a honeypot decoy
+# Actions that touch live systems and can therefore trip a honeypot decoy.
+# Phishing is included (v4.3): a phishing payload can land on a honeypot user,
+# and excluding it gave the attacker a fully decoy-proof, near-silent initial
+# access route it learned to abuse (37% of actions, ~80% win rate).
 ACTIVE_ATT_ACTIONS = frozenset({
-    A_ACTIVE_SCAN, A_EXPLOIT, A_BRUTE_FORCE, A_PERSISTENCE, A_ESCALATE,
-    A_DUMP_CREDS, A_LATERAL, A_COLLECT, A_EXFILTRATE, A_IMPACT,
+    A_ACTIVE_SCAN, A_EXPLOIT, A_BRUTE_FORCE, A_PHISHING, A_PERSISTENCE,
+    A_ESCALATE, A_DUMP_CREDS, A_LATERAL, A_COLLECT, A_EXFILTRATE, A_IMPACT,
 })
 
 # ── Defender actions ────────────────────────────────────────────────────────
@@ -178,7 +181,7 @@ class RewardConfig:
     # by SUSTAINED control — repeated evidence-backed containment.
     containments_to_win:    int   = 2
     investigate_fraction:   float = 0.35    # fraction of current suspicion → evidence per investigate
-    threat_hunt_gain:       float = 1.5     # evidence from proactive hunting
+    threat_hunt_gain:       float = 2.5     # evidence from proactive hunting (anti-stealth tool)
     monitor_evidence_gain:  float = 0.4     # passive evidence when suspicion already high
     anomaly_noise_weight:   float = 0.5     # how much benign failed-logins inflate observed anomalies
     obs_suspicion_scale:    float = 20.0
@@ -199,7 +202,7 @@ class RewardConfig:
     noise_active_scan:      float = 1.5
     noise_exploit:          float = 0.7
     noise_brute:            float = 2.5
-    noise_phishing:         float = 0.4
+    noise_phishing:         float = 0.8     # still the quietest access, but no longer free
     noise_persistence:      float = 0.7
     noise_escalate:         float = 1.0
     noise_dump:             float = 1.3
@@ -264,9 +267,9 @@ class RewardConfig:
     # 93% and decoy 38% collapse).
     rd_monitor_quiet:       float = 0.05    # near-neutral: monitoring quiet is not an achievement
     rd_monitor_breached:    float = -0.3
-    rd_investigate_hit:     float = 2.0     # × evidence gained
+    rd_investigate_hit:     float = 0.7     # per evidence point actually gained
     rd_investigate_idle:    float = -0.5    # investigating when nothing is happening
-    rd_threat_hunt_hit:     float = 3.0
+    rd_threat_hunt_hit:     float = 0.7     # per evidence point actually gained
     rd_threat_hunt_idle:    float = -0.6
     rd_rate_limit_hit:      float = 1.5     # paid once on activation only
     rd_rate_limit_fp:       float = -1.0
@@ -288,7 +291,7 @@ class RewardConfig:
     rd_alert_hit:           float = 4.0
     rd_alert_spam:          float = -3.0
     rd_alert_cap:           int   = 3
-    rd_deception_hit:       float = 2.5
+    rd_deception_hit:       float = 1.2     # trimmed: was a crutch the defender leaned on instead of detecting
     rd_deception_idle:      float = -0.2    # wasted turn (was a small +0.2 farm past the cap)
     rd_deception_cap:       int   = 4
     rd_early_detect_bonus:  float = 3.0
@@ -669,23 +672,30 @@ class SharedHoneypotEnv(gym.Env):
                 r += rw.rd_monitor_quiet
 
         elif action == D_INVESTIGATE:
-            # Convert a fraction of current suspicion into hard evidence
-            gain = min(ts["suspicion"], rw.evidence_cap) * rw.investigate_fraction
+            # Convert a fraction of current suspicion into hard evidence.
+            # Reward is proportional to evidence ACTUALLY gained, capped by
+            # headroom (so it can't be farmed once evidence saturates), with
+            # a meaningful per-point coefficient — building evidence toward a
+            # containment is the defender's path to winning and must pay
+            # competitively with decoy/deception, or the defender ignores it.
+            headroom = max(0.0, rw.evidence_cap - ts["evidence"])
+            gain = min(min(ts["suspicion"], rw.evidence_cap) * rw.investigate_fraction, headroom)
             if gain > 0.3:
                 ts["evidence"] += gain
-                r += rw.rd_investigate_hit * (gain / rw.evidence_cap)
+                r += rw.rd_investigate_hit * gain
             else:
                 r += rw.rd_investigate_idle
 
         elif action == D_THREAT_HUNT:
-            # Proactive: finds even stealthy intruders, but pays only for the
-            # evidence it actually surfaces (and only up to the cap), so it
-            # can't be farmed once evidence is saturated.
+            # Proactive: surfaces even stealthy intruders (works on any active
+            # breach, not just a noisy one) — the key counter to a quiet
+            # phishing attacker. Reward proportional to evidence gained,
+            # headroom-capped → non-farmable.
             headroom = max(0.0, rw.evidence_cap - ts["evidence"])
-            gain = min(rw.threat_hunt_gain, headroom) if (ts["suspicion"] > 0.5 or breached) else 0.0
+            gain = min(rw.threat_hunt_gain, headroom) if (ts["suspicion"] > 0.3 or breached) else 0.0
             if gain > 0.1:
                 ts["evidence"] += gain
-                r += rw.rd_threat_hunt_hit * (gain / rw.evidence_cap)
+                r += rw.rd_threat_hunt_hit * gain
             else:
                 r += rw.rd_threat_hunt_idle
 
