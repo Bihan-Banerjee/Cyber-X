@@ -388,3 +388,129 @@ only, every repeatable positive reward must be tied to a state change / capped /
 proportional, and every fix gets a unit-test guard.** Run the full 50-iter run,
 read the action-frequency plots at the curriculum transitions, and treat any
 >60% single-action spike as the next farm to eliminate.
+
+---
+
+## 15. First clean 50-iteration result (v4.2/v4.3)
+
+The first non-collapsing full run (v4.2 code) **converged**: 0% draws,
+episodes ~9 steps, action entropy att 2.49 / def 2.69 bits (max 3.81),
+diverse coherent strategies. The convergence question is answered — **yes**.
+
+Balance was **attacker-favored ~80/20**, and the baselines proved it was real
+skill, not overfitting:
+- RL attacker vs scripted/expert/random defenders: 0.72 / 0.86 / 1.00
+- RL defender vs random/expert/scripted attackers: 0.98 / 0.80 / **0.34**
+  (loses to the fast loud rush).
+
+Two causes were fixed in **v4.3** (commit `3289d4c`):
+1. **Phishing bypassed decoys** (not in `ACTIVE_ATT_ACTIONS`) and was near-
+   silent → a decoy-proof stealth route the attacker abused (37% of actions).
+   Now decoy-trippable + noisier (0.4→0.8).
+2. **The defender ignored its winning path** (investigate/threat_hunt →
+   evidence → contain) because those paid far less than decoy/deception after
+   the anti-farm pass. Detection rewards are now proportional to evidence
+   actually gained (coefficient 0.7/point), still headroom-capped so
+   non-farmable; threat_hunt strengthened (anti-stealth tool); deception
+   trimmed.
+
+The v4.3 effect on the RL equilibrium is **not yet verified** — needs the next
+full run.
+
+---
+
+## 16. Roadmap to a proper research project
+
+The engineering is research-grade; the *science* is what's missing. Phases are
+roughly ordered; each is independently valuable.
+
+### Phase A — Make the current result rigorous (do first; low effort, high credibility)
+- **Multi-seed runs.** Everything is single-seed. Run ≥5 seeds per
+  configuration, report **mean ± std** (or IQM / bootstrap CIs per Agarwal et
+  al., *"Deep RL at the Edge of the Statistical Precipice"*, NeurIPS 2021).
+  A single seed is not a result.
+- **Frozen evaluation suite.** Fix a held-out set of opponents (the 6 scripted
+  agents + a few archived RL checkpoints) and a fixed seed/episode count;
+  report all numbers against it so runs are comparable.
+- **Ablations.** Turn each component off and measure the delta: curriculum,
+  BC warm-start, league mixing, entropy warmup, each major reward mechanic.
+  This is what turns "it works" into "here's *why* it works."
+- **W&B / experiment tracking.** `wandb` is already in `requirements.txt`
+  (commented). Wire it behind a config flag — log win-rates, Elo, entropy,
+  curriculum level, action distributions per iteration. Essential for
+  comparing dozens of runs.
+- **Hydra/Optuna.** Move config to Hydra for sweep-friendly overrides; use
+  Optuna for principled reward/hyperparameter search instead of hand-tuning.
+
+### Phase B — Evaluation science (the real research contribution)
+- **Exploitability / approximate best-response.** The gold standard for
+  self-play quality: freeze the trained attacker (or defender) and train a
+  fresh best-response policy against it; the best-response's win rate measures
+  how *exploitable* the frozen agent is. A truly strong policy is hard to
+  exploit. This is far more meaningful than self-play win rate.
+- **Cross-play matrix + empirical Nash.** Build an N×N win-rate matrix over
+  archived checkpoints, compute the empirical Nash equilibrium / Nash-averaging
+  (Balduzzi et al., *"Re-evaluating Evaluation"*). Detects non-transitivity
+  (rock-paper-scissors cycling — which this game showed at v4.1).
+- **Relative population performance / Elo with uncertainty.** The Elo is
+  already there; add confidence and a transitivity check.
+
+### Phase C — Stronger algorithms (once evaluation can measure improvement)
+- **PSRO** (Policy-Space Response Oracles, Lanctot et al. 2017) — the
+  principled framework this project is informally approximating. Each
+  iteration computes a best-response to the current meta-Nash over the
+  population. Would replace the ad-hoc league with theory.
+- **PFSP** (Prioritized Fictitious Self-Play, AlphaStar) — sample league
+  opponents ∝ difficulty/loss-rate instead of uniformly. Likely the single
+  highest-leverage upgrade to fight the oscillation seen mid-training.
+- **Proper action masking.** Swap RecurrentPPO for **MaskablePPO** (sb3-contrib)
+  so invalid actions are masked at the logit level instead of remapped to a
+  no-op. Cleaner credit assignment, faster learning.
+- **Opponent modeling** in the observation (belief over opponent type/strategy)
+  — a natural fit for the POMDP framing.
+
+### Phase D — Realism & grounding (what makes it a *security* paper, not just MARL)
+- **Ground actions/observations in MITRE ATT&CK.** Map each action to real
+  technique IDs; map observations to real detection signals. Cite the mapping.
+- **Calibrate dynamics from real data.** Success probabilities, noise levels,
+  and detection rates should be justified from real honeypot/red-team data,
+  not hand-picked. The `telemetry_adapter.py` + Cowrie/Elasticsearch path is
+  the hook — validate the sim's distributions against real logs.
+- **Multi-host topology.** Lateral movement is currently a counter; make it a
+  real graph (network segments, trust relationships) for a richer kill chain.
+- **Shadow-mode validation.** Run the trained defender over recorded real
+  attacks via the telemetry adapter; measure how its recommendations compare
+  to what analysts actually did. This is the practical-impact result.
+
+### Phase E — Emergent-strategy & robustness analysis
+- **Strategy taxonomy.** Cluster/label the emergent attacker and defender
+  policies across seeds/iterations — do they rediscover known TTPs (smash-and-
+  grab vs low-and-slow; investigate-then-contain vs deception-heavy)? This is a
+  compelling qualitative result and the demo already visualizes it.
+- **Robustness / transfer.** Test trained agents against held-out scripted
+  strategies and hand-crafted adversarial ones; measure generalization.
+- **The reward-design findings are themselves a contribution.** The three
+  degenerate attractors (camping, reward-farming, instant-eviction −EV) and the
+  structural anti-farm rule are a reusable lesson for reward design in
+  security/adversarial MARL — worth a methods section.
+
+### Phase F — Dissemination
+- **Reproducibility package.** Pin deps, seed everything, provide a one-command
+  repro script per figure; the eval plots are already paper-quality.
+- **Paper framing options:** (1) systems/benchmark paper — "CyberX: a
+  curriculum-driven APT-vs-SOC MARL environment + baselines"; (2) methods paper
+  — reward-design pitfalls and fixes for adversarial security MARL; (3)
+  applied/defensive — sim-trained defender recommendations validated on real
+  telemetry. (1)+(3) is the strongest combined story for a security venue.
+- **Targets:** workshops first (NeurIPS/ICML security or MARL workshops, CAMLIS,
+  AISec at CCS), then a full venue (USENIX Security / ACSAC for the security
+  angle, or AAMAS for the MARL angle).
+
+### Suggested immediate order
+1. Finish the balance loop: run the v4.3 full run (multi-seed), confirm the
+   attacker/defender gap narrows; tune with the §13 knobs if needed.
+2. Wire W&B + a frozen eval suite (Phase A) — cheap, makes everything after
+   comparable.
+3. Implement **exploitability eval** (Phase B) — the headline rigor upgrade.
+4. Add **PFSP** (Phase C) if oscillation persists.
+5. Ground in ATT&CK + validate via telemetry (Phase D) for the security story.
