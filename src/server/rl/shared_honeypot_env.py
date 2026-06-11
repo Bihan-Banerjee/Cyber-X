@@ -117,8 +117,14 @@ DEF_ACTION_NAMES = [
 
 # ── Curriculum levels ─────────────────────────────────────────────────────────
 #   0 → core kill chain only, no noise, scripted opponent
-#   1 → full actions, low benign noise, scripted opponent
-#   2 → full actions, realistic noise, league self-play
+#   1 → the full APT chain (stealth path) unlocked, low noise, scripted
+#   2 → everything (scan/brute/lateral, all SOC counters), realistic noise,
+#       league self-play
+# A gradual unlock matters: v4.0 jumped 5→14 actions in one step at level 1
+# while the opponent simultaneously powered up, which destroyed the level-0
+# policy and it never re-anchored (the iter-3 collapse). Level 1 now adds the
+# kill-chain actions an attacker actually needs to win, and level 2 adds the
+# noisy/situational extras.
 CURRICULUM_CONFIG = {
     0: {"noise_rate": 0.00, "max_steps": 60,
         # Minimal but complete path so a competent attacker CAN win:
@@ -127,8 +133,14 @@ CURRICULUM_CONFIG = {
         # Detect → investigate → contain, plus a decoy.
         "def_mask": [D_MONITOR, D_INVESTIGATE, D_DEPLOY_DECOY, D_ISOLATE, D_HARD_BLOCK]},
     1: {"noise_rate": 0.06, "max_steps": 80,
-        "att_mask": list(range(ACTION_DIM)),
-        "def_mask": list(range(12))},
+        # Full APT chain: stealthy access, persistence, the data-exfil path,
+        # and defense evasion — everything needed to win two ways.
+        "att_mask": [A_PASSIVE_RECON, A_EXPLOIT, A_PHISHING, A_PERSISTENCE,
+                     A_ESCALATE, A_DUMP_CREDS, A_COLLECT, A_EXFILTRATE,
+                     A_DEFENSE_EVASION, A_IMPACT, A_WAIT],
+        # Full reactive + proactive SOC toolkit.
+        "def_mask": [D_MONITOR, D_INVESTIGATE, D_RATE_LIMIT, D_DEPLOY_DECOY,
+                     D_THREAT_HUNT, D_ISOLATE, D_HARD_BLOCK, D_RAISE_ALERT]},
     2: {"noise_rate": 0.12, "max_steps": 100,
         "att_mask": list(range(ACTION_DIM)),
         "def_mask": list(range(12))},
@@ -161,7 +173,11 @@ class RewardConfig:
     # re-detect to act again) — that alone prevents block-spam, so the
     # operational cooldown only needs to stop double-firing in one tick.
     contain_cooldown_steps: int   = 1
-    investigate_fraction:   float = 0.55    # fraction of current suspicion → evidence per investigate
+    # v4.1: full eviction in one move is no longer possible (eradicating an
+    # APT is hard). Containment knocks the attacker back; the defender wins
+    # by SUSTAINED control — repeated evidence-backed containment.
+    containments_to_win:    int   = 2
+    investigate_fraction:   float = 0.35    # fraction of current suspicion → evidence per investigate
     threat_hunt_gain:       float = 1.5     # evidence from proactive hunting
     monitor_evidence_gain:  float = 0.4     # passive evidence when suspicion already high
     anomaly_noise_weight:   float = 0.5     # how much benign failed-logins inflate observed anomalies
@@ -177,16 +193,18 @@ class RewardConfig:
     exfil_objective_volume: int   = 3       # exfiltration count that counts as objective
 
     # ── Attacker action noise (added to suspicion) ──
+    # v4.1: stealth actions are quieter so a careful attacker can stay under
+    # the radar; the loud climax (exfil/impact/brute) stays detectable.
     noise_passive_recon:    float = 0.2
     noise_active_scan:      float = 1.5
-    noise_exploit:          float = 1.0
+    noise_exploit:          float = 0.7
     noise_brute:            float = 2.5
     noise_phishing:         float = 0.4
-    noise_persistence:      float = 1.2
-    noise_escalate:         float = 1.5
-    noise_dump:             float = 2.0
-    noise_lateral:          float = 1.8
-    noise_collect:          float = 0.8
+    noise_persistence:      float = 0.7
+    noise_escalate:         float = 1.0
+    noise_dump:             float = 1.3
+    noise_lateral:          float = 1.2
+    noise_collect:          float = 0.5
     noise_exfil:            float = 2.5
     noise_impact:           float = 4.0
     evasion_reduce:         float = 4.0     # suspicion removed by a successful evasion
@@ -220,16 +238,22 @@ class RewardConfig:
     r_impact_win:           float = 25.0
     r_evasion:              float = 2.0
     r_wait:                 float = -0.3
-    r_wrong_stage:          float = -1.5    # action invalid for current stage
+    r_wrong_stage:          float = -0.8    # action invalid for current stage (gentler — exploration)
     r_action_failed:        float = -0.5    # valid action, probabilistic miss
     r_rate_limited_fail:    float = -1.0
     r_decoy_tripped:        float = -4.0
     r_contained:            float = -8.0    # knocked back by a justified containment
-    r_evicted:              float = -10.0   # fully evicted (terminal loss)
-    # Per-step survival shaping (small; objective should dominate)
-    surv_recon:             float = -0.25   # mild pressure to get inside
-    surv_foothold:          float = 0.3
-    surv_privileged:        float = 0.6
+    # v4.1 CRITICAL FIX: survival shaping must NOT exceed the objective
+    # reward over an episode, or camping at PRIVILEGED strictly dominates
+    # winning and the attacker rationally never finishes the job. Progress
+    # is rewarded on the STAGE TRANSITION (r_foothold/r_privileged); merely
+    # existing at a stage pays nothing, and a small per-step time cost makes
+    # dwelling actively bad — the attacker is pushed to complete the
+    # objective fast, which also makes detection a real race.
+    time_cost:              float = -0.05   # applied every attacker turn (urgency)
+    surv_recon:             float = -0.10   # extra pressure to get inside
+    surv_foothold:          float = 0.0
+    surv_privileged:        float = 0.0
 
     # ── Defender rewards ──
     rd_monitor_quiet:       float = 0.3
@@ -244,9 +268,9 @@ class RewardConfig:
     rd_decoy_cap:           int   = 5
     rd_decoy_after_cap:     float = 0.2
     rd_decoy_passive:       float = 0.05    # tiny — must not become a farm
-    rd_isolate_just:        float = 10.0
+    rd_isolate_just:        float = 7.0
     rd_isolate_fp:          float = -6.0
-    rd_block_just:          float = 18.0
+    rd_block_just:          float = 12.0
     rd_block_fp:            float = -7.0
     rd_contain_cooldown:    float = -1.0    # tried to contain while a response is in progress
     rd_patch_active:        float = 1.0
@@ -440,7 +464,6 @@ class SharedHoneypotEnv(gym.Env):
             "contain_cooldown":  0,
             # Episode bookkeeping
             "objective_done":    False,
-            "evicted":           False,
             "first_detection_step": None,
             "justified_containments": 0,
             "false_positives":   0,
@@ -555,7 +578,12 @@ class SharedHoneypotEnv(gym.Env):
         self._ep_def_rewards.append(def_r)
 
         truncated  = self.current_step >= self.max_steps
-        terminated = ts["objective_done"] or ts["evicted"]
+        # Decisive outcomes end the episode: the attacker finishing the
+        # objective, or the defender achieving sustained containment.
+        terminated = (
+            ts["objective_done"]
+            or ts["justified_containments"] >= self.rw.containments_to_win
+        )
 
         reward = att_r if self.mode == "attacker" else def_r
         info = self._build_info(att_action, def_action, att_r, def_r, terminated, truncated)
@@ -572,6 +600,7 @@ class SharedHoneypotEnv(gym.Env):
         ts["decoy_tripped"]     = False
 
         prev_stage = ts["stage"]
+        prev_containments = ts["justified_containments"]
 
         # Time-based decays (log aging, fading indicators, response cooldown)
         ts["suspicion"] *= rw.suspicion_decay
@@ -593,6 +622,10 @@ class SharedHoneypotEnv(gym.Env):
         # Cross-agent consequences
         if ts["stage"] > prev_stage and not ts["objective_done"]:
             def_r += rw.rd_missed_escalation
+        # The attacker is penalised when a containment actually lands on it
+        # (the defender handler already credited the defender side).
+        if ts["justified_containments"] > prev_containments:
+            att_r += rw.r_contained
 
         ts["suspicion"] = min(ts["suspicion"], rw.suspicion_cap)
         ts["evidence"]  = min(ts["evidence"], rw.evidence_cap)
@@ -728,27 +761,35 @@ class SharedHoneypotEnv(gym.Env):
     def _apply_containment(self, full: bool) -> None:
         """Apply a justified containment. The response is disruptive, so it
         starts a cooldown and consumes the evidence that justified it (the
-        SOC must re-detect to act again). Persistence lets the attacker
-        survive; a full block with no persistence is a decisive eviction."""
+        SOC must re-detect to act again). It knocks the attacker back but
+        never instantly evicts — eradicating an APT in one move isn't
+        realistic, and instant eviction made the attacker's expected value
+        of attacking negative. The defender wins by SUSTAINED control
+        (containments_to_win). Persistence makes the knock-back gentler
+        (the attacker keeps a foothold); restore_backup removes it.
+
+        isolate (full=False): knock back one stage.
+        hard_block (full=True): knock to foothold (persistence) / recon, and
+        clear credentials + staged data.
+        """
         ts = self.true_state
         ts["justified_containments"] += 1
         ts["containment_active"] = True
         ts["contain_cooldown"] = self.rw.contain_cooldown_steps
         ts["evidence"] = 0.0
         ts["last_att_detected"] = 1
+        ts["foothold_count"] = max(0, ts["foothold_count"] - 1)
 
-        if full and not ts["persistence"]:
-            ts["evicted"] = True
+        if not full:
+            ts["stage"] = max(STAGE_RECON, ts["stage"] - 1)
+            ts["credentials"] = False
             return
-        # Knock back: persistence keeps a foothold, otherwise back to recon
         if ts["persistence"]:
             ts["stage"] = STAGE_FOOTHOLD
-            ts["credentials"] = False
         else:
             ts["stage"] = STAGE_RECON
-            ts["credentials"] = False
-            ts["data_staged"] = False
-        ts["foothold_count"] = max(0, ts["foothold_count"] - 1)
+        ts["credentials"] = False
+        ts["data_staged"] = False
 
     def _exec_attacker_action(self, action: int) -> float:
         ts = self.true_state
@@ -925,15 +966,18 @@ class SharedHoneypotEnv(gym.Env):
         return r + self._survival_shaping()
 
     def _survival_shaping(self) -> float:
+        """Per-turn time pressure. Progress is rewarded on the stage
+        TRANSITION (r_foothold/r_privileged); merely dwelling pays a small
+        cost so the attacker is pushed to finish the objective, not camp."""
         stage = self.true_state["stage"]
         rw = self.rw
         if stage == STAGE_RECON:
-            return rw.surv_recon
+            return rw.time_cost + rw.surv_recon
         if stage == STAGE_FOOTHOLD:
-            return rw.surv_foothold
+            return rw.time_cost + rw.surv_foothold
         if stage == STAGE_PRIVILEGED:
-            return rw.surv_privileged
-        return 0.0
+            return rw.time_cost + rw.surv_privileged
+        return rw.time_cost
 
     # ── Info dict ──────────────────────────────────────────────────────────────
 
@@ -963,15 +1007,14 @@ class SharedHoneypotEnv(gym.Env):
             # Exclusive win conditions:
             #   Attacker wins by completing the objective (impact or enough
             #   exfiltration).
-            #   Defender wins only by actually STOPPING the intrusion: a
-            #   decisive eviction (full block with no persistence), or
-            #   repeated evidence-backed containment (≥2) that keeps setting
-            #   a persistent attacker back. A single knock-back is not a win —
-            #   it just buys time. Detecting-but-not-stopping at the time
-            #   limit is a draw (a dwelling, unresolved breach).
+            #   Defender wins only by SUSTAINED control: containments_to_win
+            #   evidence-backed containments that keep setting the attacker
+            #   back. A single knock-back is not a win — it just buys time.
+            #   Detecting-but-not-stopping at the time limit is a draw (a
+            #   dwelling, unresolved breach).
             att_win = ts["objective_done"]
             def_win = (not att_win) and (
-                ts["evicted"] or ts["justified_containments"] >= 2
+                ts["justified_containments"] >= rw.containments_to_win
             )
             info.update({
                 "ep_att_return":         sum(self._ep_att_rewards),
@@ -979,7 +1022,6 @@ class SharedHoneypotEnv(gym.Env):
                 "attacker_win":          att_win,
                 "defender_win":          def_win,
                 "objective_done":        ts["objective_done"],
-                "evicted":               ts["evicted"],
                 "first_detection_step":  ts["first_detection_step"],
                 "false_positives":       ts["false_positives"],
                 "justified_containments": ts["justified_containments"],

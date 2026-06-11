@@ -50,9 +50,9 @@
 
   "league": {
     "ghost_pool_max": 15,
-    "scripted_slots": 2,
+    "scripted_slots": 3,
     "latest_slots": 2,
-    "_comment": "Per-iteration worker mix at level 2: scripted_slots workers vs scripted/expert, latest_slots vs current opponent, remainder vs ghosts sampled uniformly over full history"
+    "_comment": "Per-iteration worker mix at level 2: scripted_slots workers vs scripted/expert, latest_slots vs current opponent, remainder vs ghosts sampled uniformly over full history. scripted_slots raised to 3 so neither side can overfit to a collapsed opponent — both keep facing agents that play the real game."
   },
 
   "llm": {

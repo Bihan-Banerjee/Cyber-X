@@ -682,6 +682,30 @@ class MARLTrainer:
             # Hot-swap the level on the live pools — no rebuild
             self._att_envs.env_method("set_curriculum_level", self._curr_level)
             self._def_envs.env_method("set_curriculum_level", self._curr_level)
+            # Re-anchor both agents to winning scripted play that USES the
+            # newly unlocked actions. Without this, expanding the action set
+            # mid-training stranded the old policy in a losing local optimum
+            # (the iter-3 attacker collapse). A short BC refresh is cheap
+            # insurance against that shock.
+            self._bc_refresh(self._curr_level)
+
+    def _bc_refresh(self, level: int) -> None:
+        """Quick behavioral-cloning pass on the level-appropriate experts so
+        each agent starts the new curriculum stage from a competent policy
+        rather than re-discovering the (now larger) action space from
+        scratch under a strong opponent."""
+        att_exp = ScriptedAttacker if level == 0 else ExpertAttacker
+        def_exp = ScriptedDefender if level == 0 else ExpertDefender
+        print("  BC refresh for the newly unlocked actions...")
+        for mode, exp_cls, opp_cls in (
+            ("attacker", att_exp, def_exp),
+            ("defender", def_exp, att_exp),
+        ):
+            env = SharedHoneypotEnv(mode=mode, curriculum_level=level,
+                                    opponent_model=opp_cls())
+            env.reset(seed=self.seed)
+            agent = self.attacker if mode == "attacker" else self.defender
+            agent.pretrain_on_expert(exp_cls(), env, num_episodes=150, epochs=8)
 
     # ── Checkpointing ──────────────────────────────────────────────────────────
 

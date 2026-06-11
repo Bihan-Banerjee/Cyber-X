@@ -133,14 +133,14 @@ def stealth_evasion_lowers_suspicion():
 
 
 @test
-def investigation_builds_evidence_and_block_evicts():
-    """Investigating converts suspicion into evidence; a justified hard block
-    fully evicts an attacker with no persistence → defender win."""
+def sustained_containment_wins_no_instant_eviction():
+    """A single justified hard block knocks the attacker back but does NOT
+    evict (no instant kill). The defender wins only after the configured
+    number of evidence-backed containments."""
     from shared_honeypot_env import (
-        SharedHoneypotEnv, A_WAIT, D_INVESTIGATE, D_HARD_BLOCK, STAGE_FOOTHOLD,
+        SharedHoneypotEnv, A_WAIT, D_HARD_BLOCK, STAGE_FOOTHOLD, STAGE_RECON,
     )
 
-    # We drive the DEFENDER; a passive attacker that just sits at FOOTHOLD.
     class IdleAttacker:
         def predict(self, obs, deterministic=True):
             return A_WAIT, None
@@ -148,49 +148,82 @@ def investigation_builds_evidence_and_block_evicts():
     env = SharedHoneypotEnv(mode="defender", curriculum_level=2,
                             opponent_model=IdleAttacker())
     env.reset(seed=11)
-    env.true_state["stage"] = STAGE_FOOTHOLD
-    env.true_state["suspicion"] = 25.0   # plenty of evidence to extract
     env.true_state["persistence"] = False
+    assert env.rw.containments_to_win == 2
 
-    # Investigate until evidence clears the hard-block threshold
-    done = False
-    for _ in range(10):
-        env.true_state["suspicion"] = max(env.true_state["suspicion"], 20.0)
-        _, _, term, trunc, info = env.step(D_INVESTIGATE)
-        if env.true_state["evidence"] >= env.rw.contain_block_evid:
-            break
-        done = term or trunc
-        if done:
-            break
-    assert env.true_state["evidence"] >= env.rw.contain_block_evid, "evidence never built"
+    # First containment — knock-back, not a win
+    env.true_state["stage"] = STAGE_FOOTHOLD
+    env.true_state["evidence"] = 8.0
+    _, _, term, _, info = env.step(D_HARD_BLOCK)
+    assert env.true_state["stage"] == STAGE_RECON, "no-persistence block → RECON"
+    assert env.true_state["justified_containments"] == 1
+    assert not term, "one containment is not a win"
 
-    _, r, term, trunc, info = env.step(D_HARD_BLOCK)
-    assert env.true_state["evicted"], "justified hard block did not evict"
+    # Second containment — sustained control → defender win
+    env.true_state["stage"] = STAGE_FOOTHOLD
+    env.true_state["evidence"] = 8.0
+    _, _, term, _, info = env.step(D_HARD_BLOCK)
+    assert env.true_state["justified_containments"] == 2
     assert term and info["defender_win"] and not info["attacker_win"]
 
 
 @test
-def persistence_survives_containment():
-    """With persistence established, a hard block knocks the attacker back to
-    FOOTHOLD instead of fully evicting — the episode continues."""
+def persistence_softens_containment():
+    """A hard block against a persistent attacker only knocks it to FOOTHOLD
+    (it keeps a foothold); without persistence it goes back to RECON."""
     from shared_honeypot_env import (
-        SharedHoneypotEnv, A_WAIT, D_HARD_BLOCK, STAGE_PRIVILEGED, STAGE_FOOTHOLD,
+        SharedHoneypotEnv, A_WAIT, D_HARD_BLOCK, STAGE_PRIVILEGED,
+        STAGE_FOOTHOLD, STAGE_RECON,
     )
 
     class IdleAttacker:
         def predict(self, obs, deterministic=True):
             return A_WAIT, None
 
-    env = SharedHoneypotEnv(mode="defender", curriculum_level=2,
-                            opponent_model=IdleAttacker())
-    env.reset(seed=5)
-    env.true_state["stage"] = STAGE_PRIVILEGED
-    env.true_state["persistence"] = True
-    env.true_state["evidence"] = env.rw.contain_block_evid + 1.0
+    for persistence, expected in ((True, STAGE_FOOTHOLD), (False, STAGE_RECON)):
+        env = SharedHoneypotEnv(mode="defender", curriculum_level=2,
+                                opponent_model=IdleAttacker())
+        env.reset(seed=5)
+        env.true_state["stage"] = STAGE_PRIVILEGED
+        env.true_state["persistence"] = persistence
+        env.true_state["evidence"] = 8.0
+        env.step(D_HARD_BLOCK)
+        assert env.true_state["stage"] == expected, \
+            f"persistence={persistence} → expected stage {expected}"
 
-    env.step(D_HARD_BLOCK)
-    assert not env.true_state["evicted"], "persistence should survive eviction"
-    assert env.true_state["stage"] == STAGE_FOOTHOLD, "should be knocked to FOOTHOLD"
+
+@test
+def camping_is_not_optimal():
+    """THE regression guard for the v4.0 collapse: an attacker that reaches
+    PRIVILEGED and then dwells must score strictly LESS than one that
+    completes the objective. If camping ever pays more, RL rationally learns
+    to never finish (which is exactly what happened at iteration 3)."""
+    from shared_honeypot_env import (
+        SharedHoneypotEnv, A_WAIT, A_IMPACT, STAGE_PRIVILEGED, D_MONITOR,
+    )
+
+    class NoOpDefender:
+        def predict(self, obs, deterministic=True):
+            return D_MONITOR, None
+
+    def run(finish):
+        env = SharedHoneypotEnv(mode="attacker", curriculum_level=2,
+                                opponent_model=NoOpDefender())
+        env.reset(seed=1)
+        env.true_state["stage"] = STAGE_PRIVILEGED
+        total = 0.0
+        for t in range(env.max_steps):
+            a = A_IMPACT if (finish and t == 0) else A_WAIT
+            _, r, term, trunc, _ = env.step(a)
+            total += r
+            if term or trunc:
+                break
+        return total
+
+    finish_return = run(True)
+    camp_return = run(False)
+    assert finish_return > camp_return, \
+        f"camping ({camp_return:.1f}) must not beat finishing ({finish_return:.1f})"
 
 
 @test
