@@ -430,6 +430,61 @@ def game_is_decidable_both_ways():
     assert aw1 >= 1, "attacker cannot beat a random defender — game too hard"
 
 
+@test
+def repeatable_actions_are_not_farmable():
+    """No repeatable action may yield a positive episode return for merely
+    being spammed. This is the regression guard for the farm-collapse cycle
+    (defense_evasion 96%, rate_limit 93%): each previously-flat reward is now
+    one-time, outcome-proportional, or capped, so spamming it from a clean
+    state must net out non-positive after the per-step time cost."""
+    from shared_honeypot_env import (
+        SharedHoneypotEnv, A_PASSIVE_RECON, A_DEFENSE_EVASION, A_DUMP_CREDS,
+        A_COLLECT, D_MONITOR, D_RATE_LIMIT, STAGE_PRIVILEGED,
+    )
+
+    class NoOpDefender:
+        def predict(self, obs, deterministic=True):
+            return D_MONITOR, None
+
+    class IdleAttacker:
+        def predict(self, obs, deterministic=True):
+            return 13, None   # A_WAIT
+
+    def att_spam(action, setup=None):
+        env = SharedHoneypotEnv(mode="attacker", curriculum_level=2,
+                                opponent_model=NoOpDefender())
+        env.reset(seed=2)
+        if setup:
+            setup(env)
+        total = 0.0
+        for _ in range(env.max_steps):
+            _, r, term, trunc, _ = env.step(action)
+            total += r
+            if term or trunc:
+                break
+        return total
+
+    # Attacker farms: each must be non-positive when spammed
+    assert att_spam(A_PASSIVE_RECON) <= 0.0, "recon spam is farmable"
+    assert att_spam(A_DEFENSE_EVASION) <= 0.0, "evasion spam is farmable (no suspicion to clear)"
+    assert att_spam(A_DUMP_CREDS, lambda e: e.true_state.update(stage=STAGE_PRIVILEGED)) <= 5.5, \
+        "dump_credentials re-pays (should fire once ~+5 then waste)"
+    assert att_spam(A_COLLECT, lambda e: e.true_state.update(stage=STAGE_PRIVILEGED)) <= 3.5, \
+        "collect_data re-pays (should fire once ~+3 then waste)"
+
+    # Defender rate_limit spam vs an idle attacker must be non-positive
+    env = SharedHoneypotEnv(mode="defender", curriculum_level=2,
+                            opponent_model=IdleAttacker())
+    env.reset(seed=2)
+    total = 0.0
+    for _ in range(env.max_steps):
+        _, r, term, trunc, _ = env.step(D_RATE_LIMIT)
+        total += r
+        if term or trunc:
+            break
+    assert total <= 0.0, f"rate_limit spam is farmable (return {total:.1f})"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":

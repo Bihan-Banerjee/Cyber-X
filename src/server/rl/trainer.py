@@ -168,6 +168,21 @@ class MARLTrainer:
         logger.info("Trainer ready.  Device=%s  seed=%d  dir=%s",
                     self.device, self.seed, save_dir)
 
+    # ── Resource cleanup ───────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        """Close the persistent SubprocVecEnv pools. Critical on crash/exit:
+        each pool spawns n_envs worker processes (~0.5 GB each), and if the
+        trainer dies without closing them they orphan and leak. With the
+        auto-restart supervisor stacking a fresh process on top, repeated
+        crashes otherwise compound into an out-of-memory failure."""
+        for pool in (getattr(self, "_att_envs", None), getattr(self, "_def_envs", None)):
+            try:
+                if pool is not None:
+                    pool.close()
+            except Exception:
+                pass
+
     # ── Device resolution ──────────────────────────────────────────────────────
 
     @staticmethod

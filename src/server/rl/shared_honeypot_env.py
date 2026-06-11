@@ -256,18 +256,24 @@ class RewardConfig:
     surv_privileged:        float = 0.0
 
     # ── Defender rewards ──
-    rd_monitor_quiet:       float = 0.3
+    # NOTE: no repeatable defender action pays a flat positive reward — every
+    # "hit" reward is either one-time (rotate/restore), capped by evidence
+    # headroom (monitor/investigate/threat_hunt), gated on activation
+    # (rate_limit) or on an actual state change (patch), or counts toward the
+    # win (isolate/block). Flat per-step rewards become farms (the rate_limit
+    # 93% and decoy 38% collapse).
+    rd_monitor_quiet:       float = 0.05    # near-neutral: monitoring quiet is not an achievement
     rd_monitor_breached:    float = -0.3
     rd_investigate_hit:     float = 2.0     # × evidence gained
     rd_investigate_idle:    float = -0.5    # investigating when nothing is happening
     rd_threat_hunt_hit:     float = 3.0
     rd_threat_hunt_idle:    float = -0.6
-    rd_rate_limit_hit:      float = 2.5
+    rd_rate_limit_hit:      float = 1.5     # paid once on activation only
     rd_rate_limit_fp:       float = -1.0
     rd_decoy_deploy:        float = 1.5
     rd_decoy_cap:           int   = 5
-    rd_decoy_after_cap:     float = 0.2
-    rd_decoy_passive:       float = 0.05    # tiny — must not become a farm
+    rd_decoy_after_cap:     float = -0.3    # deploying past the cap is a wasted turn
+    rd_decoy_passive:       float = 0.0     # removed — was a per-step farm (decoy 38%)
     rd_isolate_just:        float = 7.0
     rd_isolate_fp:          float = -6.0
     rd_block_just:          float = 12.0
@@ -283,7 +289,7 @@ class RewardConfig:
     rd_alert_spam:          float = -3.0
     rd_alert_cap:           int   = 3
     rd_deception_hit:       float = 2.5
-    rd_deception_idle:      float = 0.2
+    rd_deception_idle:      float = -0.2    # wasted turn (was a small +0.2 farm past the cap)
     rd_deception_cap:       int   = 4
     rd_early_detect_bonus:  float = 3.0
     rd_missed_escalation:   float = -6.0    # attacker advanced a stage this turn
@@ -650,9 +656,13 @@ class SharedHoneypotEnv(gym.Env):
         anomalies = self._observed_anomalies()
 
         if action == D_MONITOR:
-            if anomalies > 2.0:
-                ts["evidence"] += rw.monitor_evidence_gain
-                r += rw.monitor_evidence_gain
+            # Passive evidence trickle, capped by evidence headroom so it
+            # can't be farmed once evidence is saturated.
+            headroom = max(0.0, rw.evidence_cap - ts["evidence"])
+            gain = min(rw.monitor_evidence_gain, headroom) if anomalies > 2.0 else 0.0
+            if gain > 0.0:
+                ts["evidence"] += gain
+                r += gain
             elif breached:
                 r += rw.rd_monitor_breached
             else:
@@ -668,15 +678,25 @@ class SharedHoneypotEnv(gym.Env):
                 r += rw.rd_investigate_idle
 
         elif action == D_THREAT_HUNT:
-            # Proactive: finds even stealthy intruders, but wasteful if none
-            if ts["suspicion"] > 0.5 or breached:
-                ts["evidence"] += rw.threat_hunt_gain
-                r += rw.rd_threat_hunt_hit * 0.5
+            # Proactive: finds even stealthy intruders, but pays only for the
+            # evidence it actually surfaces (and only up to the cap), so it
+            # can't be farmed once evidence is saturated.
+            headroom = max(0.0, rw.evidence_cap - ts["evidence"])
+            gain = min(rw.threat_hunt_gain, headroom) if (ts["suspicion"] > 0.5 or breached) else 0.0
+            if gain > 0.1:
+                ts["evidence"] += gain
+                r += rw.rd_threat_hunt_hit * (gain / rw.evidence_cap)
             else:
                 r += rw.rd_threat_hunt_idle
 
         elif action == D_RATE_LIMIT:
-            if anomalies >= 2.0 or ts["failed_logins"] >= 3:
+            # Reward only on ACTIVATION — re-applying a throttle that is
+            # already in effect accomplishes nothing and must not re-pay
+            # (this was the dominant defender farm). The slow itself still
+            # helps the defender win by delaying the attacker.
+            if ts["rate_limit_steps"] > 0:
+                r += 0.0   # already throttled — no-op, no reward
+            elif anomalies >= 2.0 or ts["failed_logins"] >= 3:
                 ts["rate_limit_steps"] = rw.rate_limit_duration
                 r += rw.rd_rate_limit_hit
             else:
@@ -711,11 +731,14 @@ class SharedHoneypotEnv(gym.Env):
                 r += rw.rd_block_fp
 
         elif action == D_PATCH_HARDEN:
-            if breached or ts["suspicion"] > 1.0:
-                ts["patched_level"] = min(1.0, ts["patched_level"] + rw.patch_step)
+            # Reward only when hardening ACTUALLY increases — patching a fully
+            # hardened target is a wasted turn, not a farm.
+            before = ts["patched_level"]
+            ts["patched_level"] = min(1.0, before + rw.patch_step)
+            increased = ts["patched_level"] > before
+            if increased and (breached or ts["suspicion"] > 1.0):
                 r += rw.rd_patch_active
             else:
-                ts["patched_level"] = min(1.0, ts["patched_level"] + rw.patch_step)
                 r += rw.rd_patch_idle
 
         elif action == D_ROTATE_CREDS:
@@ -804,17 +827,28 @@ class SharedHoneypotEnv(gym.Env):
 
         # ── Stealth-only actions (no decoy trip, often reduce heat) ──
         if action == A_PASSIVE_RECON:
-            ts["recon_done"] = True
-            ts["suspicion"] += rw.noise_passive_recon
-            ts["last_att_success"] = 1
-            r += rw.r_recon
+            # Reward only the FIRST recon — repeating it accomplishes nothing
+            # and must not pay (otherwise it becomes a farm).
+            if not ts["recon_done"]:
+                ts["recon_done"] = True
+                ts["suspicion"] += rw.noise_passive_recon
+                ts["last_att_success"] = 1
+                r += rw.r_recon
+            else:
+                r += rw.r_action_failed   # wasted turn
             return r + self._survival_shaping()
 
         if action == A_DEFENSE_EVASION:
+            # Reward is proportional to the suspicion ACTUALLY cleared. At low
+            # suspicion there is nothing to evade, so it pays ~0 (a wasted
+            # turn after time_cost) — evasion is only worth it when you are
+            # hot. This kills the flat-reward evasion farm.
             if rng.random() < rw.evasion_success:
-                ts["suspicion"] = max(0.0, ts["suspicion"] - rw.evasion_reduce)
+                before = ts["suspicion"]
+                ts["suspicion"] = max(0.0, before - rw.evasion_reduce)
+                cleared = before - ts["suspicion"]
                 ts["last_att_success"] = 1
-                r += rw.r_evasion
+                r += rw.r_evasion * (cleared / rw.evasion_reduce)
             else:
                 ts["suspicion"] += rw.evasion_fail_noise   # caught clearing logs
                 r += rw.r_action_failed
@@ -837,10 +871,14 @@ class SharedHoneypotEnv(gym.Env):
                 ts["last_att_detected"] = 1
 
         if action == A_ACTIVE_SCAN:
-            ts["recon_done"] = True
-            ts["suspicion"] += rw.noise_active_scan
-            ts["last_att_success"] = 1
-            r += rw.r_scan
+            if not ts["recon_done"]:
+                ts["recon_done"] = True
+                ts["suspicion"] += rw.noise_active_scan
+                ts["last_att_success"] = 1
+                r += rw.r_scan
+            else:
+                ts["suspicion"] += rw.noise_active_scan
+                r += rw.r_action_failed   # already scanned — wasted, still noisy
 
         elif action == A_EXPLOIT:
             if stage == STAGE_RECON:
@@ -910,7 +948,9 @@ class SharedHoneypotEnv(gym.Env):
                 r += rw.r_wrong_stage
 
         elif action == A_DUMP_CREDS:
-            if stage == STAGE_PRIVILEGED:
+            # One-time: dumping again when you already have credentials is a
+            # wasted, noisy action — it must not re-pay.
+            if stage == STAGE_PRIVILEGED and not ts["credentials"]:
                 ts["credentials"] = True
                 ts["credential_anomaly"] = True
                 ts["suspicion"] += rw.noise_dump
@@ -920,8 +960,10 @@ class SharedHoneypotEnv(gym.Env):
                 r += rw.r_wrong_stage
 
         elif action == A_LATERAL:
-            if stage == STAGE_PRIVILEGED and ts["credentials"]:
-                ts["foothold_count"] = min(rw.max_footholds, ts["foothold_count"] + 1)
+            # Only a NEW foothold pays — spamming lateral at the cap is a farm.
+            if (stage == STAGE_PRIVILEGED and ts["credentials"]
+                    and ts["foothold_count"] < rw.max_footholds):
+                ts["foothold_count"] += 1
                 ts["credential_anomaly"] = True
                 ts["suspicion"] += rw.noise_lateral
                 ts["last_att_success"] = 1
@@ -930,7 +972,8 @@ class SharedHoneypotEnv(gym.Env):
                 r += rw.r_wrong_stage
 
         elif action == A_COLLECT:
-            if stage == STAGE_PRIVILEGED:
+            # One-time: data is staged once; re-collecting must not re-pay.
+            if stage == STAGE_PRIVILEGED and not ts["data_staged"]:
                 ts["data_staged"] = True
                 ts["suspicion"] += rw.noise_collect
                 ts["last_att_success"] = 1

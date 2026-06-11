@@ -43,15 +43,37 @@ def _supervise(argv: list, max_restarts: int) -> int:
 
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+    def _kill_tree(pid: int) -> None:
+        """Kill the child AND its SubprocVecEnv workers. On Windows a crashed
+        child leaves its worker grandchildren orphaned (~0.5 GB each); without
+        this, repeated restarts pile workers up until the box runs out of RAM
+        — which is exactly how an overnight run dies a second time."""
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True)
+            else:
+                import signal as _sig
+                os.killpg(os.getpgid(pid), _sig.SIGKILL)
+        except Exception:
+            pass
+
     base_cmd = [sys.executable, os.path.abspath(__file__)] + argv + ["--worker"]
     attempt = 0
     while True:
         cmd = list(base_cmd)
         if attempt > 0 and "--resume" not in cmd:
             cmd.append("--resume")
-        code = subprocess.call(cmd)
+        proc = subprocess.Popen(cmd)
+        try:
+            code = proc.wait()
+        except KeyboardInterrupt:
+            _kill_tree(proc.pid)
+            return 0
         if code == 0:
             return 0
+        # Crash: reap any orphaned worker processes before relaunching
+        _kill_tree(proc.pid)
         attempt += 1
         if attempt > max_restarts:
             print(f"\n  Training crashed {attempt} times (exit {code}) — "
@@ -179,14 +201,19 @@ def main():
         config         = cfg,
     )
 
-    trainer.train(
-        n_iterations         = n_iters,
-        timesteps_per_iter   = timesteps,
-        eval_episodes        = eval_eps,
-        run_bc_phase         = run_bc,
-        run_llm_oracle_phase = run_llm,
-        resume               = args.resume,
-    )
+    # Always close the env pools — on success, crash, or Ctrl+C — so the
+    # n_envs×2 worker subprocesses never orphan and leak memory.
+    try:
+        trainer.train(
+            n_iterations         = n_iters,
+            timesteps_per_iter   = timesteps,
+            eval_episodes        = eval_eps,
+            run_bc_phase         = run_bc,
+            run_llm_oracle_phase = run_llm,
+            resume               = args.resume,
+        )
+    finally:
+        trainer.close()
 
     if not trainer._pause_requested:
         print(f"\n  Training complete!")
