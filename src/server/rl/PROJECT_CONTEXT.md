@@ -11,23 +11,34 @@ CyberX is a cyber-security simulator with a **2-agent MARL core** (Attacker
 vs Defender) living in `src/server/rl/`. Over this work the RL stack was
 refactored from a broken/duplicated state into a production-grade,
 seeded, config-driven system, and the *environment itself* was redesigned
-twice into a realistic **APT-vs-SOC game (v4.2)**.
+into a realistic **APT-vs-SOC game** (now at **v4.3**).
 
 **What works now (verified):** clean architecture, reproducible seeding,
 persistent parallel env pools, league self-play, BC warm-start, crash
 auto-restart, 17/17 unit tests, scripted-agent game balance (decidable
-both ways), eval that doesn't destabilize cuDNN.
+both ways), eval that doesn't destabilize cuDNN, and — as of the first clean
+full run — **convergence**: a 50-iteration run that does NOT collapse and
+settles into stable, diverse, decisive play (see §15).
 
-**What is NOT yet verified:** a clean **50-iteration self-play
-convergence**. Every full run so far surfaced a different *degenerate
-attractor* (camping → farming). Each was diagnosed and fixed structurally,
-but the final "does it converge to balanced skilled play" question is still
-open and needs the next full run (blocked only by a local RAM/process issue
-at time of writing — see §11).
+**The convergence + balance questions are both answered: yes.** Three earlier
+full runs each surfaced a different *degenerate attractor* (camping →
+reward-farming); each was diagnosed and fixed structurally with a unit-test
+guard. The v4.2 run ran 50 iterations clean but **attacker-favored ~80/20**
+(real skill per baselines, not overfitting), caused by a phishing/decoy bug +
+under-rewarded defender detection. **v4.3** (commit `3289d4c`) fixed both, and
+the next full run came back **contested ~56/44** with the defender now actively
+using its detection tools — see §15. **The single-seed result is now a stable,
+balanced, non-degenerate game.** Reward tuning is considered DONE.
 
-**Last action:** committed `b16383b` (anti-farm + worker-leak fix). The
-immediate next step is a fresh full run on a clean machine, watching the
-action-frequency plots at curriculum transitions.
+**What is NOT yet verified (and is the real remaining work):**
+*statistical/scientific rigor* — the 56/44 is a **single seed**. Confirm it
+across ≥5 seeds (mean±std), then measure agent strength objectively via
+**exploitability** (best-response) rather than self-play win rate. This is the
+Phase A/B research work in §16, not more reward tuning.
+
+**Last action:** committed `ac0f330` (research roadmap) → reviewed the v4.3 run
+(verdict: balanced, stop tuning). The immediate next step is the multi-seed +
+exploitability rigor work (§16 Phase A/B), NOT further coefficient changes.
 
 ---
 
@@ -115,6 +126,9 @@ Read newest-last. Each line is one commit.
 | `4b50938` | **v4 environment redesign** — realistic APT-vs-SOC (stealth economy, detect≠contain, counterplay, 14/12 actions, 12-dim obs) |
 | `9401c98` | **v4.1** — fixed co-adaptation collapse: killed the **camping attractor**, softened eviction, smoother curriculum, BC refresh on promotion |
 | `b16383b` | **v4.2** — eliminated **reward farms**; fixed SubprocVecEnv **worker leak on crash** |
+| `160a6be` | Added `PROJECT_CONTEXT.md` (this handoff doc) |
+| `3289d4c` | **v4.3** — rebalanced toward defender: closed phishing/decoy hole, made detection rewards meaningful (non-farmable). Result: ~56/44 contested |
+| `ac0f330` | Documented first clean 50-iter result + research-project roadmap (§16) |
 
 Earlier commits (`af1f19e` and before) are the user's pre-existing work.
 
@@ -309,27 +323,30 @@ a new farm. Reproduce it cheaply by extending
 - **Smoke run:** `python run_training.py --iterations 3 --timesteps 3000 --seed 7
   --save-dir ./models/smoke --no-auto-restart`. A v4.1 smoke produced decisive
   balanced games (att 50-80%, def 20-50%, zero draws) at level 0 — good signal.
-- **Full run:** `python run_training.py --mode full` (50 iters). **Not yet run
-  to completion on v4.2.** This is the key open verification.
+- **Full run:** `python run_training.py --mode full` (50 iters). **Done on
+  v4.2 (converged, 80/20) and v4.3 (converged, 56/44 contested)** — see §15.
+  The remaining verification is *multi-seed* (§16 Phase A), not a single run.
 
 ---
 
 ## 11. Known issues / open risks
 
-- **OPEN: 50-iter convergence unproven.** Incentives are now correct in unit
-  tests and the scripted game is balanced, but a clean full self-play run that
-  converges to skilled balanced play has not been observed (each prior run hit a
-  collapse, each now fixed). **This is the #1 thing to confirm next.**
-- **Local RAM/process hygiene.** At handoff there was a live python process
-  (PID 18908) + 16 SubprocVecEnv workers using ~8 GB, leaving ~1.4 GB free,
-  which OOM'd a verification run. Before a full run: ensure no stray python
-  training processes (`Get-Process python`), or reboot. v4.2's worker-tree-kill
-  prevents *future* crashes from leaking, but pre-existing strays must be
-  cleared manually.
-- **Scripted balance is loud-rush-favored.** ScriptedAttacker (smash-and-grab)
-  beats ExpertDefender 25/15, while the stealth path (ExpertAttacker) loses
-  11/29. Realistic, but if you want the low-and-slow style equally viable for a
-  demo, nudge `noise_exfil`/`noise_impact` down.
+- **Single-seed result.** The 56/44 balance is from one seed. Confirm across
+  ≥5 seeds (mean±std) before treating it as the number (§16 Phase A). This is
+  now the #1 open item — but it's *rigor*, not a bug.
+- **Reward tuning is considered DONE** — do not chase 50/50 (see §15 verdict).
+  If a *future* change reintroduces a degenerate attractor, the rule in §9 +
+  the `camping_is_not_optimal` / `repeatable_actions_are_not_farmable` guards
+  are the playbook.
+- **Local RAM/process hygiene.** SubprocVecEnv spawns n_envs×2 (~16) worker
+  processes (~0.5 GB each). Before a full run, ensure no stray python training
+  processes (`Get-Process python`) or reboot — a leftover run can OOM a new
+  one. v4.2's worker-tree-kill prevents *future* crashes from leaking, but
+  pre-existing strays must be cleared manually.
+- **Demo depth.** At the balanced config the defender catches the attacker
+  early, so episodes are short (6–7 steps) and rarely reach the deep kill
+  chain. For showcase episodes only, raise `max_steps` or ease detection;
+  keep the trained-balance config for training.
 - **Old checkpoints unloadable** (see §3).
 - **LLM oracle** paths/prompts were updated to v4 but the oracle is off by
   default and untested against a live API this cycle.
@@ -338,25 +355,23 @@ a new farm. Reproduce it cheaply by extending
 
 ## 12. Recommended next steps (in order)
 
-1. **Clear stray python processes / reboot**, confirm `>10 GB` free RAM.
-2. **Run a full 50-iter run** with a fixed seed:
-   `python run_training.py --mode full --seed 42`.
-3. **Watch the action-frequency heatmaps** (`models/cyberx_marl/results/
-   action_heatmap_iter*.png`) at each curriculum transition (the historical
-   death zones: the L0→L1 and L1→L2 promotions). Healthy = a spread of actions,
-   episodes resolving in <30 steps, both win-rates contested. Red flag = any
-   single action > 60% or episode length pinned at the step limit with 100%
-   draws.
-4. **If a new farm appears:** identify the spiking action, add a reproducing
-   case to `repeatable_actions_are_not_farmable`, apply the structural rule
-   (§9), re-verify, commit.
-5. **If it converges:** evaluate `*_best.zip` via the demo endpoint
-   (`POST /api/rl/demo/start` → SSE `/api/rl/demo/stream`) and the paper-table
-   endpoint; consider tuning scripted-balance for the stealth path; wire the
-   telemetry adapter to a real honeypot for the shadow-mode demo.
-6. **Optional robustness:** PFSP (prioritized fictitious self-play) weighting in
-   the league if oscillation persists — sample ghosts ∝ loss-rate. Noted as
-   future work in the original plan, not yet implemented.
+Reward tuning is done; the work is now **scientific rigor** (see §16 for the
+full roadmap). In priority order:
+
+1. **Multi-seed the v4.3 config** (≥5 seeds, `--mode full --seed N`), report
+   self-play + baseline win-rates as **mean ± std**. Confirms 56/44 is stable.
+2. **Wire W&B** (already in `requirements.txt`, commented) behind a config flag
+   — makes all subsequent runs comparable. Cheap, high payoff.
+3. **Implement exploitability eval** (§16 Phase B): freeze a trained agent,
+   train a fresh best-response against it; its win-rate measures how
+   exploitable the agent is — the objective strength metric, far better than
+   self-play win-rate.
+4. **Ablations** (§16 Phase A): curriculum / BC / league / each reward
+   mechanic off, measure the delta — turns "it works" into "here's why."
+5. **Then** the realism/grounding and writing phases (§16 Phase D–F).
+6. **Watch for regressions** on any future run: a single action > 60% or
+   episodes pinned at the step limit with high draws = a new attractor;
+   reproduce it in `repeatable_actions_are_not_farmable` and apply §9.
 
 ---
 
@@ -391,19 +406,18 @@ read the action-frequency plots at the curriculum transitions, and treat any
 
 ---
 
-## 15. First clean 50-iteration result (v4.2/v4.3)
+## 15. Full-run results (v4.2 → v4.3)
 
+### v4.2 run — first clean convergence (attacker-favored)
 The first non-collapsing full run (v4.2 code) **converged**: 0% draws,
 episodes ~9 steps, action entropy att 2.49 / def 2.69 bits (max 3.81),
-diverse coherent strategies. The convergence question is answered — **yes**.
-
-Balance was **attacker-favored ~80/20**, and the baselines proved it was real
-skill, not overfitting:
+diverse coherent strategies. Convergence answered — **yes**. But it was
+**attacker-favored ~80/20**, real skill not overfitting per baselines:
 - RL attacker vs scripted/expert/random defenders: 0.72 / 0.86 / 1.00
 - RL defender vs random/expert/scripted attackers: 0.98 / 0.80 / **0.34**
   (loses to the fast loud rush).
 
-Two causes were fixed in **v4.3** (commit `3289d4c`):
+Two causes fixed in **v4.3** (commit `3289d4c`):
 1. **Phishing bypassed decoys** (not in `ACTIVE_ATT_ACTIONS`) and was near-
    silent → a decoy-proof stealth route the attacker abused (37% of actions).
    Now decoy-trippable + noisier (0.4→0.8).
@@ -414,8 +428,34 @@ Two causes were fixed in **v4.3** (commit `3289d4c`):
    non-farmable; threat_hunt strengthened (anti-stealth tool); deception
    trimmed.
 
-The v4.3 effect on the RL equilibrium is **not yet verified** — needs the next
-full run.
+### v4.3 run — CONTESTED & BALANCED (the target state)
+The next full run (v4.3 code) came back **contested ~56/44** (self-play,
+last-10 avg) — the 80/20 gap closed. Everything healthy held:
+- 0% draws, episodes ~7 steps (decisive), entropy att 2.29 / def 2.55.
+- Trajectory oscillates around balance (the *defender* led at iter 48,
+  0.54/0.46) — normal self-play, not collapse.
+- **The defender now actively uses `threat_hunt`** (its top action, 29–61%
+  across L2) — exactly the detect→contain behavior the v4.3 reward fix was
+  meant to induce. The attacker shifted off phish-spam onto exploit/escalate
+  (phishing is no longer a free silent route).
+- Baselines, both sides now ~0.44–0.64 vs scripted opponents (genuinely
+  two-sided):
+  - RL attacker vs scripted/expert/random def: 0.56 / 0.62 / 1.00
+  - RL defender vs scripted/expert/random att: 0.44 / 0.64 / 1.00
+
+**Verdict: reward tuning is DONE.** The game is balanced, stable, decisive,
+diverse, and free of the camping/farming attractors. Do **not** chase exactly
+50/50 — 56/44 is well within contested, self-play oscillates a few points
+regardless, and further coefficient changes risk reintroducing a pathology.
+
+Caveats / minor observations (not balance issues):
+- This is a **single seed** — confirm across ≥5 seeds before treating 56/44 as
+  *the* number (§16 Phase A).
+- Privileged-stage % fell to ~0.30 and episodes are short (6–7 steps): the
+  defender now catches the attacker early, so games rarely show the *deep*
+  kill chain. Fine for balance; if you want longer cat-and-mouse for the
+  **demo**, raise `max_steps` or ease detection *for showcase episodes only* —
+  keep the trained-balance config as-is.
 
 ---
 
