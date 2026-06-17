@@ -83,6 +83,65 @@ def aggregate_exploitability() -> dict:
     }
 
 
+def record_demo(run_dir: str, n_episodes: int = 1) -> dict:
+    """Play best-attacker vs best-defender and capture the per-step events in
+    the same shape api.py:/demo/stream emits, so the RL Arena demo replay can
+    animate a real episode with no live backend. Heavy (loads torch); lazy."""
+    import numpy as np  # noqa: PLC0415
+    from sb3_contrib import RecurrentPPO  # noqa: PLC0415
+    from shared_honeypot_env import (  # noqa: PLC0415
+        ATT_ACTION_NAMES, DEF_ACTION_NAMES, SharedHoneypotEnv, StatefulOpponent,
+    )
+
+    att_path = os.path.join(run_dir, "attacker_best.zip")
+    def_path = os.path.join(run_dir, "defender_best.zip")
+    attacker = RecurrentPPO.load(att_path, device="cpu")
+    defender = RecurrentPPO.load(def_path, device="cpu")
+    env = SharedHoneypotEnv(
+        mode="attacker",
+        opponent_model=StatefulOpponent(defender),
+        curriculum_level=2,
+    )
+    env.reset(seed=7)
+
+    events: list = []
+    for ep in range(1, n_episodes + 1):
+        obs, _ = env.reset()
+        lstm_state, done, info = None, False, {}
+        events.append({"type": "episode_start", "episode": ep,
+                       "max_steps": env.max_steps})
+        while not done:
+            action, lstm_state = attacker.predict(
+                np.asarray(obs, dtype=np.float32).reshape(1, -1),
+                state=lstm_state, deterministic=True)
+            obs, _, term, trunc, info = env.step(int(np.asarray(action).flat[0]))
+            done = term or trunc
+            events.append({
+                "type": "step", "episode": ep, "step": info["step"],
+                "att_action": info["att_action"],
+                "att_action_name": ATT_ACTION_NAMES[info["att_action"]],
+                "def_action": info["def_action"],
+                "def_action_name": DEF_ACTION_NAMES[info["def_action"]],
+                "stage": info["stage"], "suspicion": info["suspicion"],
+                "evidence": info["evidence"], "egress_volume": info["egress_volume"],
+                "decoys_deployed": info["decoys_deployed"],
+                "att_reward": round(info["att_step_reward"], 2),
+                "def_reward": round(info["def_step_reward"], 2),
+            })
+        events.append({
+            "type": "episode_end", "episode": ep,
+            "attacker_win": bool(info.get("attacker_win", False)),
+            "defender_win": bool(info.get("defender_win", False)),
+            "ep_att_return": round(info.get("ep_att_return", 0.0), 2),
+            "ep_def_return": round(info.get("ep_def_return", 0.0), 2),
+            "first_detection_step": info.get("first_detection_step"),
+            "false_positives": info.get("false_positives", 0),
+        })
+    events.append({"type": "done"})
+    return {"note": "Recorded best-vs-best episode for RL Arena demo replay "
+                    "(no live backend needed).", "events": events}
+
+
 def leaderboard_from(run_dir: str) -> dict:
     elo_path = os.path.join(run_dir, "elo_ratings.json")
     if not os.path.exists(elo_path):
@@ -98,6 +157,9 @@ def main() -> None:
     parser.add_argument(
         "--run", default="run_four_a",
         help="results subdir to use for history/leaderboard/plot (default: run_four_a)")
+    parser.add_argument(
+        "--demo", action="store_true",
+        help="also record a best-vs-best demo episode (loads torch; slower)")
     args = parser.parse_args()
 
     run_dir = os.path.join(_RESULTS_DIR, args.run)
@@ -127,7 +189,16 @@ def main() -> None:
     if os.path.exists(plot_src):
         shutil.copy2(plot_src, os.path.join(_PUBLIC_DIR, "training_curves.png"))
 
-    # 5. manifest / provenance
+    # 5. optional recorded demo episode (best vs best)
+    if args.demo:
+        try:
+            demo = record_demo(run_dir, n_episodes=1)
+            with open(os.path.join(_PUBLIC_DIR, "demo_episode.json"), "w") as f:
+                json.dump(demo, f, indent=2)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  (demo recording skipped: {exc})")
+
+    # 6. manifest / provenance
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_run":   args.run,
