@@ -362,3 +362,15 @@ coverage.xml
 *.orig
 repomix-output.*
 export.md
+
+# ── Claude Code / agent local files ─────────────────────────────────
+.claude/
+CLAUDE.local.md
+
+# ── Local scratch / working artifacts (not part of the app) ─────────
+TOOLS_LLM_CONTEXT.md
+security_tool_roadmap.xlsx
+be_routes.txt
+fe_routes.txt
+existing_tools.txt
+imported_tools.txt
