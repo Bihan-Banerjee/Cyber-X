@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
 import { Activity, Shield, AlertTriangle, MapPin, Terminal, Play, Square } from "lucide-react";
 import { API_BASE_URL } from "@/lib/api";
+import DefenderCopilot from "@/components/DefenderCopilot";
 interface HoneypotStatus {
   name: string;
   type: string;
@@ -59,7 +60,7 @@ const HoneypotMonitor = () => {
 
   const fetchRecentAttacks = async () => {
     try {
-      const response = await fetch("${API_BASE_URL}/api/honeypot/attacks/recent?limit=20");
+      const response = await fetch(`${API_BASE_URL}/api/honeypot/attacks/recent?limit=20`);
       const data = await response.json();
       setRecentAttacks(data.attacks);
     } catch (error) {
@@ -189,7 +190,8 @@ const HoneypotMonitor = () => {
         </div>
       </CyberpunkCard>
 
-      {/* Recent Attacks */}
+      {/* Recent Attacks + Defender Copilot */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <CyberpunkCard title="RECENT ATTACKS">
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {recentAttacks.length === 0 ? (
@@ -227,6 +229,9 @@ const HoneypotMonitor = () => {
           )}
         </div>
       </CyberpunkCard>
+
+        <DefenderCopilot />
+      </div>
 
       {/* Auto-refresh Toggle */}
       <div className="flex justify-end">
