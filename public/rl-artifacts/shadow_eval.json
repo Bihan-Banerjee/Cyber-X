@@ -1,0 +1,306 @@
+{
+  "model": "./models/cyberx_marl/results/run_four_a/defender_best.zip",
+  "n_events": 400,
+  "n_windows": 20,
+  "window_size": 20,
+  "action_distribution": {
+    "monitor": 0,
+    "investigate": 0,
+    "rate_limit": 0,
+    "deploy_decoy": 0,
+    "threat_hunt": 20,
+    "isolate_host": 0,
+    "hard_block": 0,
+    "patch_harden": 0,
+    "rotate_credentials": 0,
+    "restore_backup": 0,
+    "raise_alert": 0,
+    "deception_response": 0
+  },
+  "exact_agreement": 0.1,
+  "reasonable_agreement": 0.65,
+  "synthetic": true,
+  "note": "Shadow-mode eval: trained-in-sim defender over honeypot telemetry vs a documented analyst heuristic (proxy ground truth). Controlled evaluation, not a deployment claim.",
+  "rows": [
+    {
+      "summary": {
+        "failed_logins": 11,
+        "suspicious_commands": 6,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "threat_hunt",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 9,
+        "suspicious_commands": 3,
+        "port_scan": 1,
+        "priv_esc_attempts": 2,
+        "downloads": 4,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 14,
+        "suspicious_commands": 1,
+        "port_scan": 0,
+        "priv_esc_attempts": 1,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 13,
+        "suspicious_commands": 2,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "threat_hunt",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 11,
+        "suspicious_commands": 4,
+        "port_scan": 0,
+        "priv_esc_attempts": 3,
+        "downloads": 2,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 10,
+        "suspicious_commands": 4,
+        "port_scan": 0,
+        "priv_esc_attempts": 1,
+        "downloads": 3,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 11,
+        "suspicious_commands": 2,
+        "port_scan": 0,
+        "priv_esc_attempts": 0,
+        "downloads": 4,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    },
+    {
+      "summary": {
+        "failed_logins": 11,
+        "suspicious_commands": 1,
+        "port_scan": 0,
+        "priv_esc_attempts": 0,
+        "downloads": 3,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    },
+    {
+      "summary": {
+        "failed_logins": 9,
+        "suspicious_commands": 2,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    },
+    {
+      "summary": {
+        "failed_logins": 10,
+        "suspicious_commands": 3,
+        "port_scan": 1,
+        "priv_esc_attempts": 1,
+        "downloads": 2,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 10,
+        "suspicious_commands": 5,
+        "port_scan": 0,
+        "priv_esc_attempts": 2,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 13,
+        "suspicious_commands": 2,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    },
+    {
+      "summary": {
+        "failed_logins": 6,
+        "suspicious_commands": 3,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 6,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    },
+    {
+      "summary": {
+        "failed_logins": 9,
+        "suspicious_commands": 5,
+        "port_scan": 1,
+        "priv_esc_attempts": 3,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 9,
+        "suspicious_commands": 5,
+        "port_scan": 0,
+        "priv_esc_attempts": 1,
+        "downloads": 4,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 11,
+        "suspicious_commands": 2,
+        "port_scan": 1,
+        "priv_esc_attempts": 1,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 15,
+        "suspicious_commands": 3,
+        "port_scan": 0,
+        "priv_esc_attempts": 0,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    },
+    {
+      "summary": {
+        "failed_logins": 11,
+        "suspicious_commands": 2,
+        "port_scan": 1,
+        "priv_esc_attempts": 1,
+        "downloads": 1,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 13,
+        "suspicious_commands": 3,
+        "port_scan": 0,
+        "priv_esc_attempts": 2,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "isolate_host",
+      "reasonable": true
+    },
+    {
+      "summary": {
+        "failed_logins": 12,
+        "suspicious_commands": 3,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 2,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "rl_action": "threat_hunt",
+      "expected": "investigate",
+      "reasonable": false
+    }
+  ]
+}
