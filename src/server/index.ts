@@ -34,15 +34,34 @@ app.use('/api/honeypot', honeypotRoutes);
 // Proxy all /api/rl/* requests to Python Flask server.
 // req.originalUrl keeps the /api/rl prefix (req.url has it stripped by the
 // mount), and Flask registers its routes under /api/rl/... too.
+// Streams the upstream response so Server-Sent Events endpoints
+// (/api/rl/telemetry/stream, /api/rl/demo/stream, /api/rl/logs/stream) flow
+// through in real time instead of being buffered into a single JSON reply.
 app.use('/api/rl', async (req, res) => {
   try {
-    const response = await axios({
+    const upstream = await axios({
       method: req.method,
       url: `${RL_API_URL}${req.originalUrl}`,
       data: req.body,
       headers: { 'Content-Type': req.headers['content-type'] || 'application/json' },
+      responseType: 'stream',
+      validateStatus: () => true,   // forward non-2xx instead of throwing
+      timeout: 0,                   // SSE connections stay open
     });
-    res.status(response.status).json(response.data);
+
+    res.status(upstream.status);
+    const contentType = upstream.headers['content-type'];
+    if (contentType) res.setHeader('Content-Type', contentType);
+
+    if (contentType && contentType.includes('text/event-stream')) {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      (res as any).flushHeaders?.();
+    }
+
+    upstream.data.pipe(res);
+    req.on('close', () => upstream.data.destroy());
   } catch (error: any) {
     res.status(error.response?.status || 500).json({
       error: error.message
