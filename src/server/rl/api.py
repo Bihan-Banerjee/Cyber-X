@@ -22,18 +22,27 @@ Endpoints:
   GET  /api/rl/demo/stream         – SSE stream of per-step match events
   POST /api/rl/telemetry/suggest   – defender action suggestion from live
                                      Elasticsearch telemetry (shadow mode)
+  GET  /api/rl/telemetry/stream    – SSE: rolling defender suggestion over the
+                                     live honeypot telemetry feed
+  GET  /api/rl/metrics/history     – full training_history.json (chart arrays)
+  GET  /api/rl/exploitability      – aggregated NashConv / best-response report
+  GET  /api/rl/plots/<name>        – serve a results PNG (training_curves, …)
 """
 
+import glob
 import json
 import logging
 import os
 import queue
+import statistics
 import threading
 import time
 from datetime import datetime
 from typing import Optional
 
-from flask import Flask, Response, jsonify, request, stream_with_context
+from flask import (
+    Flask, Response, jsonify, request, send_from_directory, stream_with_context,
+)
 from flask_cors import CORS
 
 from config_loader import get_config
@@ -57,6 +66,9 @@ _demo_queue: queue.Queue = queue.Queue(maxsize=2000)
 
 _advisor         = None   # cached DefenderAdvisor (telemetry shadow mode)
 _advisor_path    = None
+
+_SAVE_DIR        = "./models/cyberx_marl"
+_RESULTS_DIR     = os.path.join(_SAVE_DIR, "results")
 
 
 # ── Log handler that pushes to the SSE queue ──────────────────────────────────
@@ -162,6 +174,40 @@ def get_metrics():
 @app.route("/api/rl/metrics/live", methods=["GET"])     # frontend alias
 def get_latest_metrics():
     return jsonify(_latest_metrics())
+
+
+@app.route("/api/rl/metrics/history", methods=["GET"])
+def get_metrics_history():
+    """Parallel-array training history for the convergence charts:
+    {iterations[], curriculum_levels[], att_win_rates[], def_win_rates[],
+     att_elo[], def_elo[], timestamps[]}. Empty arrays if no run yet."""
+    history = _load_history()
+    if not history:
+        history = {k: [] for k in (
+            "iterations", "curriculum_levels", "att_win_rates",
+            "def_win_rates", "att_elo", "def_elo", "timestamps")}
+    return jsonify(history)
+
+
+@app.route("/api/rl/exploitability", methods=["GET"])
+def get_exploitability():
+    """Aggregate every exploitability_report.json under the results dir into
+    the NashConv / best-response summary (mean ± std + per-run rows)."""
+    return jsonify(_aggregate_exploitability())
+
+
+@app.route("/api/rl/plots/<path:name>", methods=["GET"])
+def get_plot(name: str):
+    """Serve a results PNG. `training_progress` is aliased to training_curves.png
+    for backward compatibility with the original frontend."""
+    if name in ("training_progress", "training_progress.png"):
+        name = "training_curves.png"
+    if not name.endswith(".png"):
+        name += ".png"
+    abs_dir = os.path.abspath(_RESULTS_DIR)
+    if not os.path.exists(os.path.join(abs_dir, name)):
+        return jsonify({"error": f"plot '{name}' not found"}), 404
+    return send_from_directory(abs_dir, name, mimetype="image/png")
 
 
 @app.route("/api/rl/leaderboard", methods=["GET"])
@@ -440,6 +486,65 @@ def telemetry_suggest():
     return jsonify({**result, "observation": obs.tolist()})
 
 
+@app.route("/api/rl/telemetry/stream", methods=["GET"])
+def telemetry_stream():
+    """SSE: roll the trained defender over the live honeypot telemetry feed.
+    Each tick emits {events_summary, observation, action, action_name}. Powers
+    the Defender Copilot without the frontend polling. Inference only."""
+    global _advisor, _advisor_path
+
+    es_url   = request.args.get("es_url", "http://localhost:9200")
+    window   = request.args.get("window", "now-5m")
+    interval = max(2.0, float(request.args.get("interval", 5.0)))
+
+    def generate():
+        global _advisor, _advisor_path
+        from telemetry_adapter import DefenderAdvisor, TelemetryAdapter
+
+        model_path = _model_path("defender")
+        if model_path is None:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'No trained defender found — run training first'})}\n\n"
+            return
+
+        if _advisor is None or _advisor_path != model_path:
+            try:
+                _advisor = DefenderAdvisor(model_path)
+                _advisor_path = model_path
+            except Exception as exc:  # noqa: BLE001
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                return
+
+        adapter = TelemetryAdapter(es_url=es_url, window=window)
+        while True:
+            try:
+                summary = adapter.summarize(adapter.fetch_events())
+                obs     = adapter.build_observation(step_fraction=0.5)
+                result  = _advisor.suggest(obs)
+                event   = {
+                    "type":           "suggestion",
+                    "time":           datetime.utcnow().isoformat(),
+                    "events_summary": summary,
+                    "observation":    obs.tolist(),
+                    "action":         result["action"],
+                    "action_name":    result["action_name"],
+                }
+                yield f"data: {json.dumps(event)}\n\n"
+            except GeneratorExit:
+                return
+            except Exception as exc:  # noqa: BLE001
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            time.sleep(interval)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #   HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -459,6 +564,54 @@ def _latest_metrics() -> dict:
     with open(metrics_path) as f:
         all_m = json.load(f)
     return all_m[-1] if all_m else {}
+
+
+def _mean_std(values: list) -> dict:
+    vals = [v for v in values if v is not None]
+    if not vals:
+        return {"mean": None, "std": None}
+    return {
+        "mean": round(statistics.fmean(vals), 3),
+        "std":  round(statistics.pstdev(vals), 3) if len(vals) > 1 else 0.0,
+    }
+
+
+def _aggregate_exploitability() -> dict:
+    """Collect every exploitability_report.json under the results dir and
+    aggregate NashConv + per-side exploitability/gap into mean ± std."""
+    reports = sorted(glob.glob(
+        os.path.join(_RESULTS_DIR, "**", "exploitability_report.json"),
+        recursive=True))
+    runs, nashconv, att_e, att_g, def_e, def_g = [], [], [], [], [], []
+    for path in reports:
+        try:
+            with open(path) as f:
+                r = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        att = r.get("attacker_exploitability", {}) or {}
+        dfd = r.get("defender_exploitability", {}) or {}
+        nashconv.append(r.get("nashconv"))
+        att_e.append(att.get("exploitability"))
+        att_g.append(att.get("gap_over_equilibrium"))
+        def_e.append(dfd.get("exploitability"))
+        def_g.append(dfd.get("gap_over_equilibrium"))
+        runs.append({
+            "run":      os.path.basename(os.path.dirname(path)),
+            "nashconv": r.get("nashconv"),
+            "att_exploitability": att.get("exploitability"),
+            "att_gap":  att.get("gap_over_equilibrium"),
+            "def_exploitability": dfd.get("exploitability"),
+            "def_gap":  dfd.get("gap_over_equilibrium"),
+            "equilibrium": r.get("equilibrium"),
+        })
+    return {
+        "n_runs":   len(runs),
+        "nashconv": _mean_std(nashconv),
+        "attacker": {"exploitability": _mean_std(att_e), "gap": _mean_std(att_g)},
+        "defender": {"exploitability": _mean_std(def_e), "gap": _mean_std(def_g)},
+        "runs":     runs,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -44,8 +44,8 @@ develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# NOTE: do NOT use a bare `lib/` here — it matches src/lib/ (frontend source).
+# Python build dirs live under build/ or the venv, which are already ignored.
 parts/
 sdist/
 var/
