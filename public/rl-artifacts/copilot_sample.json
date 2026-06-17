@@ -1,0 +1,29 @@
+{
+  "note": "Static replay sample for the Defender Copilot when no live Flask/ES stack is present (hosted site). Represents typical trained-defender responses to honeypot telemetry. Cycled client-side.",
+  "suggestions": [
+    {
+      "type": "suggestion",
+      "events_summary": { "failed_logins": 27, "suspicious_commands": 4, "port_scan": 1, "priv_esc_attempts": 2, "downloads": 1, "n_sessions": 3, "n_src_ips": 2 },
+      "action": 4,
+      "action_name": "threat_hunt"
+    },
+    {
+      "type": "suggestion",
+      "events_summary": { "failed_logins": 61, "suspicious_commands": 1, "port_scan": 1, "priv_esc_attempts": 0, "downloads": 0, "n_sessions": 5, "n_src_ips": 4 },
+      "action": 2,
+      "action_name": "rate_limit"
+    },
+    {
+      "type": "suggestion",
+      "events_summary": { "failed_logins": 8, "suspicious_commands": 9, "port_scan": 0, "priv_esc_attempts": 5, "downloads": 3, "n_sessions": 2, "n_src_ips": 1 },
+      "action": 5,
+      "action_name": "isolate_host"
+    },
+    {
+      "type": "suggestion",
+      "events_summary": { "failed_logins": 3, "suspicious_commands": 12, "port_scan": 1, "priv_esc_attempts": 6, "downloads": 5, "n_sessions": 1, "n_src_ips": 1 },
+      "action": 6,
+      "action_name": "hard_block"
+    }
+  ]
+}

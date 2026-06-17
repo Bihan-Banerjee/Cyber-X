@@ -476,7 +476,7 @@ const Home = () => {
         >
           {[
             { value: "99.9%", label: "UPTIME" },
-            { value: "25+", label: "TOOLS AVAILABLE" },
+            { value: "100+", label: "TOOLS AVAILABLE" },
             { value: "24/7", label: "MONITORING" },
             { value: "<1ms", label: "RESPONSE TIME" },
           ].map((stat, i) => (

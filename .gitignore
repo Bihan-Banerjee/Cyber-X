@@ -44,8 +44,8 @@ develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# NOTE: do NOT use a bare `lib/` here — it matches src/lib/ (frontend source).
+# Python build dirs live under build/ or the venv, which are already ignored.
 parts/
 sdist/
 var/
@@ -258,7 +258,7 @@ models/
 src/server/rl/logs/
 logs/
 src/server/rl/data/
-data/
+# NOTE: do NOT use a bare `data/` here — it matches src/data/ (frontend source).
 
 # Training state (auto-generated, recreated on next run)
 trainer_state.json
@@ -362,3 +362,15 @@ coverage.xml
 *.orig
 repomix-output.*
 export.md
+
+# ── Claude Code / agent local files ─────────────────────────────────
+.claude/
+CLAUDE.local.md
+
+# ── Local scratch / working artifacts (not part of the app) ─────────
+TOOLS_LLM_CONTEXT.md
+security_tool_roadmap.xlsx
+be_routes.txt
+fe_routes.txt
+existing_tools.txt
+imported_tools.txt

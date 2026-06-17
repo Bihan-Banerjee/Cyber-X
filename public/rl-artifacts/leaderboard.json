@@ -1,0 +1,428 @@
+{
+  "leaderboard": [
+    {
+      "agent": "attacker_iter_24",
+      "elo": 1778
+    },
+    {
+      "agent": "attacker_iter_21",
+      "elo": 1758
+    },
+    {
+      "agent": "attacker_iter_27",
+      "elo": 1753
+    },
+    {
+      "agent": "defender_iter_5",
+      "elo": 1736
+    },
+    {
+      "agent": "attacker_iter_23",
+      "elo": 1733
+    },
+    {
+      "agent": "attacker_iter_26",
+      "elo": 1732
+    },
+    {
+      "agent": "attacker_iter_11",
+      "elo": 1726
+    },
+    {
+      "agent": "attacker_iter_35",
+      "elo": 1723
+    },
+    {
+      "agent": "attacker_iter_25",
+      "elo": 1723
+    },
+    {
+      "agent": "attacker_iter_20",
+      "elo": 1723
+    },
+    {
+      "agent": "attacker_iter_19",
+      "elo": 1704
+    },
+    {
+      "agent": "attacker_iter_28",
+      "elo": 1697
+    },
+    {
+      "agent": "attacker_iter_3",
+      "elo": 1693
+    },
+    {
+      "agent": "attacker_iter_33",
+      "elo": 1679
+    },
+    {
+      "agent": "attacker_iter_17",
+      "elo": 1678
+    },
+    {
+      "agent": "attacker_iter_31",
+      "elo": 1673
+    },
+    {
+      "agent": "attacker_iter_12",
+      "elo": 1655
+    },
+    {
+      "agent": "defender_iter_4",
+      "elo": 1654
+    },
+    {
+      "agent": "attacker_iter_30",
+      "elo": 1651
+    },
+    {
+      "agent": "attacker_iter_38",
+      "elo": 1650
+    },
+    {
+      "agent": "attacker_iter_18",
+      "elo": 1647
+    },
+    {
+      "agent": "attacker_iter_22",
+      "elo": 1647
+    },
+    {
+      "agent": "attacker_iter_40",
+      "elo": 1644
+    },
+    {
+      "agent": "attacker_iter_7",
+      "elo": 1642
+    },
+    {
+      "agent": "attacker_iter_34",
+      "elo": 1640
+    },
+    {
+      "agent": "attacker_iter_4",
+      "elo": 1634
+    },
+    {
+      "agent": "attacker_iter_37",
+      "elo": 1632
+    },
+    {
+      "agent": "attacker_iter_9",
+      "elo": 1630
+    },
+    {
+      "agent": "attacker_iter_39",
+      "elo": 1629
+    },
+    {
+      "agent": "attacker_iter_8",
+      "elo": 1629
+    },
+    {
+      "agent": "attacker_iter_47",
+      "elo": 1618
+    },
+    {
+      "agent": "attacker_iter_32",
+      "elo": 1615
+    },
+    {
+      "agent": "attacker_iter_15",
+      "elo": 1614
+    },
+    {
+      "agent": "attacker_iter_50",
+      "elo": 1613
+    },
+    {
+      "agent": "attacker_iter_29",
+      "elo": 1613
+    },
+    {
+      "agent": "def_scripted",
+      "elo": 1613
+    },
+    {
+      "agent": "attacker_iter_14",
+      "elo": 1607
+    },
+    {
+      "agent": "defender_iter_8",
+      "elo": 1607
+    },
+    {
+      "agent": "attacker_iter_44",
+      "elo": 1603
+    },
+    {
+      "agent": "attacker_iter_36",
+      "elo": 1602
+    },
+    {
+      "agent": "attacker_iter_2",
+      "elo": 1596
+    },
+    {
+      "agent": "attacker_iter_45",
+      "elo": 1594
+    },
+    {
+      "agent": "attacker_iter_42",
+      "elo": 1593
+    },
+    {
+      "agent": "attacker_iter_13",
+      "elo": 1590
+    },
+    {
+      "agent": "attacker_iter_48",
+      "elo": 1587
+    },
+    {
+      "agent": "attacker_iter_16",
+      "elo": 1583
+    },
+    {
+      "agent": "defender_iter_11",
+      "elo": 1578
+    },
+    {
+      "agent": "attacker_iter_43",
+      "elo": 1577
+    },
+    {
+      "agent": "defender_iter_6",
+      "elo": 1569
+    },
+    {
+      "agent": "defender_iter_3",
+      "elo": 1569
+    },
+    {
+      "agent": "defender_iter_14",
+      "elo": 1568
+    },
+    {
+      "agent": "defender_iter_7",
+      "elo": 1564
+    },
+    {
+      "agent": "attacker_iter_1",
+      "elo": 1564
+    },
+    {
+      "agent": "def_expert",
+      "elo": 1552
+    },
+    {
+      "agent": "attacker_iter_49",
+      "elo": 1542
+    },
+    {
+      "agent": "defender_iter_10",
+      "elo": 1532
+    },
+    {
+      "agent": "attacker_iter_41",
+      "elo": 1529
+    },
+    {
+      "agent": "attacker_iter_10",
+      "elo": 1524
+    },
+    {
+      "agent": "defender_iter_16",
+      "elo": 1524
+    },
+    {
+      "agent": "attacker_iter_6",
+      "elo": 1513
+    },
+    {
+      "agent": "defender_iter_9",
+      "elo": 1502
+    },
+    {
+      "agent": "defender_iter_37",
+      "elo": 1482
+    },
+    {
+      "agent": "defender_iter_48",
+      "elo": 1472
+    },
+    {
+      "agent": "defender_iter_15",
+      "elo": 1469
+    },
+    {
+      "agent": "attacker_iter_46",
+      "elo": 1463
+    },
+    {
+      "agent": "defender_iter_12",
+      "elo": 1461
+    },
+    {
+      "agent": "defender_iter_45",
+      "elo": 1456
+    },
+    {
+      "agent": "defender_iter_40",
+      "elo": 1454
+    },
+    {
+      "agent": "defender_iter_42",
+      "elo": 1447
+    },
+    {
+      "agent": "defender_iter_30",
+      "elo": 1446
+    },
+    {
+      "agent": "defender_iter_43",
+      "elo": 1445
+    },
+    {
+      "agent": "defender_iter_1",
+      "elo": 1436
+    },
+    {
+      "agent": "defender_iter_39",
+      "elo": 1431
+    },
+    {
+      "agent": "defender_iter_46",
+      "elo": 1426
+    },
+    {
+      "agent": "defender_iter_13",
+      "elo": 1425
+    },
+    {
+      "agent": "att_scripted",
+      "elo": 1420
+    },
+    {
+      "agent": "defender_iter_18",
+      "elo": 1411
+    },
+    {
+      "agent": "defender_iter_47",
+      "elo": 1407
+    },
+    {
+      "agent": "defender_iter_35",
+      "elo": 1406
+    },
+    {
+      "agent": "defender_iter_2",
+      "elo": 1404
+    },
+    {
+      "agent": "defender_iter_49",
+      "elo": 1398
+    },
+    {
+      "agent": "defender_iter_36",
+      "elo": 1397
+    },
+    {
+      "agent": "defender_iter_38",
+      "elo": 1392
+    },
+    {
+      "agent": "defender_iter_50",
+      "elo": 1387
+    },
+    {
+      "agent": "defender_iter_41",
+      "elo": 1385
+    },
+    {
+      "agent": "defender_iter_22",
+      "elo": 1382
+    },
+    {
+      "agent": "defender_iter_19",
+      "elo": 1381
+    },
+    {
+      "agent": "defender_iter_17",
+      "elo": 1349
+    },
+    {
+      "agent": "defender_iter_23",
+      "elo": 1345
+    },
+    {
+      "agent": "defender_iter_32",
+      "elo": 1343
+    },
+    {
+      "agent": "defender_iter_20",
+      "elo": 1340
+    },
+    {
+      "agent": "defender_iter_31",
+      "elo": 1331
+    },
+    {
+      "agent": "defender_iter_44",
+      "elo": 1325
+    },
+    {
+      "agent": "defender_iter_27",
+      "elo": 1325
+    },
+    {
+      "agent": "attacker_iter_5",
+      "elo": 1323
+    },
+    {
+      "agent": "defender_iter_34",
+      "elo": 1313
+    },
+    {
+      "agent": "defender_iter_33",
+      "elo": 1308
+    },
+    {
+      "agent": "defender_iter_29",
+      "elo": 1308
+    },
+    {
+      "agent": "defender_iter_28",
+      "elo": 1300
+    },
+    {
+      "agent": "att_expert",
+      "elo": 1283
+    },
+    {
+      "agent": "defender_iter_25",
+      "elo": 1271
+    },
+    {
+      "agent": "defender_iter_24",
+      "elo": 1235
+    },
+    {
+      "agent": "defender_iter_21",
+      "elo": 1220
+    },
+    {
+      "agent": "defender_iter_26",
+      "elo": 1219
+    },
+    {
+      "agent": "def_random",
+      "elo": 880
+    },
+    {
+      "agent": "att_random",
+      "elo": 506
+    }
+  ]
+}

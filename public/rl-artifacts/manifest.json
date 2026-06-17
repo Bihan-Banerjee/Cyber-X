@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-06-17T16:33:31.857720+00:00",
+  "source_run": "run_four_a",
+  "n_iterations": 50,
+  "nashconv": {
+    "mean": 0.359,
+    "std": 0.061
+  },
+  "note": "Baked snapshot of a real CyberX MARL run for the hosted site / replay mode. Regenerate with export_artifacts.py."
+}
