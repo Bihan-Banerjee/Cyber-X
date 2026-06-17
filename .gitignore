@@ -258,7 +258,7 @@ models/
 src/server/rl/logs/
 logs/
 src/server/rl/data/
-data/
+# NOTE: do NOT use a bare `data/` here — it matches src/data/ (frontend source).
 
 # Training state (auto-generated, recreated on next run)
 trainer_state.json
