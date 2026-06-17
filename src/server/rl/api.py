@@ -205,9 +205,17 @@ def get_plot(name: str):
     if not name.endswith(".png"):
         name += ".png"
     abs_dir = os.path.abspath(_RESULTS_DIR)
-    if not os.path.exists(os.path.join(abs_dir, name)):
-        return jsonify({"error": f"plot '{name}' not found"}), 404
-    return send_from_directory(abs_dir, name, mimetype="image/png")
+    if os.path.exists(os.path.join(abs_dir, name)):
+        return send_from_directory(abs_dir, name, mimetype="image/png")
+    # Fall back to the newest matching plot in any run subdir.
+    matches = sorted(
+        glob.glob(os.path.join(abs_dir, "**", name), recursive=True),
+        key=os.path.getmtime, reverse=True)
+    if matches:
+        return send_from_directory(
+            os.path.dirname(matches[0]), os.path.basename(matches[0]),
+            mimetype="image/png")
+    return jsonify({"error": f"plot '{name}' not found"}), 404
 
 
 @app.route("/api/rl/leaderboard", methods=["GET"])
