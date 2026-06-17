@@ -20,25 +20,39 @@ both ways), eval that doesn't destabilize cuDNN, and — as of the first clean
 full run — **convergence**: a 50-iteration run that does NOT collapse and
 settles into stable, diverse, decisive play (see §15).
 
-**The convergence + balance questions are both answered: yes.** Three earlier
-full runs each surfaced a different *degenerate attractor* (camping →
-reward-farming); each was diagnosed and fixed structurally with a unit-test
-guard. The v4.2 run ran 50 iterations clean but **attacker-favored ~80/20**
-(real skill per baselines, not overfitting), caused by a phishing/decoy bug +
-under-rewarded defender detection. **v4.3** (commit `3289d4c`) fixed both, and
-the next full run came back **contested ~56/44** with the defender now actively
-using its detection tools — see §15. **The single-seed result is now a stable,
-balanced, non-degenerate game.** Reward tuning is considered DONE.
+**Convergence, balance, AND exploitability are all measured now.** Three early
+runs each hit a *degenerate attractor* (camping → reward-farming); each was
+fixed structurally with a unit-test guard. v4.2 ran clean but attacker-favored
+80/20; **v4.3** (`3289d4c`) fixed a phishing/decoy bug + under-rewarded defender
+detection and brought it to contested **~56/44**. Then **5 full training runs**
+held at **attacker 0.60 ± 0.04 / defender 0.40 ± 0.04**, 0% draws, diverse
+strategies, no collapse (§15). Finally, a **5-run exploitability evaluation**
+(§15) gives the objective verdict: **NashConv 0.36 ± 0.06** — the *attacker*
+converges near a best-response (gap 0.11 ± 0.10) while the *defender* stays
+**0.25 ± 0.07 exploitable** (a best-response attacker beats it 0.80 ± 0.01).
+**Reward tuning is DONE; the defender is the identified weak link.**
 
-**What is NOT yet verified (and is the real remaining work):**
-*statistical/scientific rigor* — the 56/44 is a **single seed**. Confirm it
-across ≥5 seeds (mean±std), then measure agent strength objectively via
-**exploitability** (best-response) rather than self-play win rate. This is the
-Phase A/B research work in §16, not more reward tuning.
+**What this means in plain terms:** the game converges reliably to a stable,
+contested, non-degenerate equilibrium that is *decent but not airtight* — the
+defender is under-trained relative to its own potential (a dedicated defender
+can win 0.56 vs the attacker, but the co-trained one manages ~0.45). The fix is
+**not** more reward tuning — it's better *training* (PFSP / PSRO) to close the
+defender's best-response gap.
 
-**Last action:** committed `ac0f330` (research roadmap) → reviewed the v4.3 run
-(verdict: balanced, stop tuning). The immediate next step is the multi-seed +
-exploitability rigor work (§16 Phase A/B), NOT further coefficient changes.
+**Publishability (asked & assessed):** good enough **now** for a workshop /
+benchmark / experience paper, framed on the reward-design-pitfalls finding +
+the exploitability methodology (NOT "we trained agents that work" — the
+algorithm is standard PPO+league). NOT yet a top main-track result. The three
+highest-leverage additions, in order: (1) true multi-seed (the 5 runs are all
+seed 42 — replicate variance, not seed variance; rerun `--seed 1..5` or call
+them "5 independent runs"), (2) ablations (curriculum/BC/league off →
+NashConv delta), (3) one improvement result (PFSP closing the defender gap,
+NashConv before/after). See §16.
+
+**Last action:** built + ran the **exploitability harness** (`exploitability.py`,
+`32e82d7`) with a rich progress display (`eval_progress.py`, `8a198b4`);
+analyzed all 5 seeds. The recommended next step is **PFSP** (close the defender
+gap → lower NashConv → headline result), NOT further reward changes.
 
 ---
 
@@ -129,6 +143,9 @@ Read newest-last. Each line is one commit.
 | `160a6be` | Added `PROJECT_CONTEXT.md` (this handoff doc) |
 | `3289d4c` | **v4.3** — rebalanced toward defender: closed phishing/decoy hole, made detection rewards meaningful (non-farmable). Result: ~56/44 contested |
 | `ac0f330` | Documented first clean 50-iter result + research-project roadmap (§16) |
+| `72e9f2e` | Documented v4.3 contested result; reconciled doc to post-convergence state |
+| `32e82d7` | **`exploitability.py`** — best-response / NashConv evaluation harness |
+| `8a198b4` | **`eval_progress.py`** — rich progress display for the exploitability eval (ETA, overall bar, live curve) |
 
 Earlier commits (`af1f19e` and before) are the user's pre-existing work.
 
@@ -146,7 +163,9 @@ All under `src/server/rl/`:
 | `trainer.py` | `MARLTrainer` — main loop, league mixing, curriculum promotion, BC + BC-refresh-on-promotion, ghost pool (path-only), checkpointing, pause/resume, `close()`. |
 | `vec_env_factory.py` | `make_vec_env` — persistent SubprocVecEnv pools, `Monitor` + `torch.set_num_threads(1)` per worker, hot-swap-friendly `ForwardingMonitor`. |
 | `evaluator.py` | `MARLEvaluator` — Elo, win-rate/TTD/kill-chain metrics, plots, CPU-clone eval, seeded matches. |
-| `progress.py` | Live tqdm progress + rich post-iteration summary panels. |
+| `exploitability.py` | **Best-response / exploitability evaluation.** Freezes a trained best agent, trains a best-response opponent against it, reports per-side exploitability + gap-over-equilibrium + NashConv. The objective strength metric (self-play win rate can't measure this). |
+| `eval_progress.py` | `ExploitProgress` — training-grade progress display for `exploitability.py` (header, equilibrium bars, per-iter step bar, live win-rate sparkline, overall ETA, NashConv verdict). |
+| `progress.py` | Live tqdm progress + rich post-iteration summary panels (training). |
 | `config_loader.py` | Typed config dataclasses (`PPOConfig`, `CurriculumConfig`, `TrainingConfig`, `LeagueConfig`) + validation. |
 | `config.json` | All hyperparameters / curriculum / league / seed. |
 | `run_training.py` | CLI entry. Preset modes, `--seed`/`--n-envs`, crash-restart supervisor (kills worker tree on crash), UTF-8 stdout. |
@@ -331,9 +350,13 @@ a new farm. Reproduce it cheaply by extending
 
 ## 11. Known issues / open risks
 
-- **Single-seed result.** The 56/44 balance is from one seed. Confirm across
-  ≥5 seeds (mean±std) before treating it as the number (§16 Phase A). This is
-  now the #1 open item — but it's *rigor*, not a bug.
+- **The defender is exploitable (the #1 substantive open item).** 5-run
+  exploitability: defender gap 0.25 ± 0.07 (a best-response attacker wins 0.80),
+  attacker gap only 0.11. The defender is under-trained relative to its
+  best-response potential. The targeted fix is **PFSP** (§16 Phase C), not reward
+  tuning. NashConv 0.36 ± 0.06.
+- **"5 seeds" are all seed 42** (replicate variance, not seed variance). For
+  paper rigor, rerun `--seed 1..5` or describe as "5 independent runs."
 - **Reward tuning is considered DONE** — do not chase 50/50 (see §15 verdict).
   If a *future* change reintroduces a degenerate attractor, the rule in §9 +
   the `camping_is_not_optimal` / `repeatable_actions_are_not_farmable` guards
@@ -355,21 +378,19 @@ a new farm. Reproduce it cheaply by extending
 
 ## 12. Recommended next steps (in order)
 
-Reward tuning is done; the work is now **scientific rigor** (see §16 for the
-full roadmap). In priority order:
+Reward tuning AND exploitability measurement are done. The work is now
+**closing the defender gap + rigor + writing** (see §16). In priority order:
 
-1. **Multi-seed the v4.3 config** (≥5 seeds, `--mode full --seed N`), report
-   self-play + baseline win-rates as **mean ± std**. Confirms 56/44 is stable.
-2. **Wire W&B** (already in `requirements.txt`, commented) behind a config flag
-   — makes all subsequent runs comparable. Cheap, high payoff.
-3. **Implement exploitability eval** (§16 Phase B): freeze a trained agent,
-   train a fresh best-response against it; its win-rate measures how
-   exploitable the agent is — the objective strength metric, far better than
-   self-play win-rate.
-4. **Ablations** (§16 Phase A): curriculum / BC / league / each reward
-   mechanic off, measure the delta — turns "it works" into "here's why."
-5. **Then** the realism/grounding and writing phases (§16 Phase D–F).
-6. **Watch for regressions** on any future run: a single action > 60% or
+1. **Build PFSP** (§16 Phase C) — THE next step. Exploitability showed the
+   defender under-responds to the attacker; PFSP samples league opponents ∝
+   loss-rate to target exactly that. Then re-run `exploitability.py` →
+   "NashConv 0.36 → X" is a headline improvement result.
+2. **True multi-seed** (`--seed 1..5`) + **W&B** + **ablations** (curriculum /
+   BC / league / each reward mechanic off → NashConv delta) — the rigor a
+   reviewer will want; turns "it works" into "here's why."
+3. **Then** realism/grounding (ATT&CK + telemetry, §16 Phase D) and writing
+   (§16 Phase F; workshop/benchmark/experience framing per §15).
+4. **Watch for regressions** on any future run: a single action > 60% or
    episodes pinned at the step limit with high draws = a new attractor;
    reproduce it in `repeatable_actions_are_not_farmable` and apply §9.
 
@@ -395,14 +416,15 @@ n_steps, batch, ent_coef per role, warmup, per-level timestep fractions,
 
 ## 14. One-paragraph mental model for the next session
 
-The infrastructure is solid and done; the open work is **game balance under
-RL optimization**. The single recurring failure mode is *degenerate attractors*
-— the agents find a way to score without playing. Two are fixed and guarded
-(camping, farming); the discipline going forward is: **outcome-driven rewards
-only, every repeatable positive reward must be tied to a state change / capped /
-proportional, and every fix gets a unit-test guard.** Run the full 50-iter run,
-read the action-frequency plots at the curriculum transitions, and treat any
->60% single-action spike as the next farm to eliminate.
+The infrastructure, the game, and the *evaluation* are done. Reward tuning is
+finished (5 runs hold ~60/40, no degenerate attractors — the camping/farming
+playbook in §9 is the guard if one ever returns). Exploitability is measured
+(NashConv 0.36 ± 0.06). The open work is now **scientific**, not tuning: the
+exploitability result identified the **defender as the weak link** (gap 0.25),
+so the next step is **PFSP** to close it (→ a "NashConv before/after"
+improvement result), then true multi-seed + ablations, then writing it up as a
+workshop/benchmark/experience paper framed on the reward-design-pitfalls finding
++ the exploitability methodology (§15, §16). Do not reward-tune further.
 
 ---
 
@@ -457,6 +479,46 @@ Caveats / minor observations (not balance issues):
   **demo**, raise `max_steps` or ease detection *for showcase episodes only* —
   keep the trained-balance config as-is.
 
+### 5-run aggregate (the `run_four_a..e` dirs)
+Five full 50-iter runs (stored at `models/cyberx_marl/results/run_four_{a..e}`)
+held the v4.3 equilibrium tightly:
+- **Self-play: attacker 0.60 ± 0.04 / defender 0.40 ± 0.04**, 0% draws, episodes
+  ~7 steps, entropy ~2.2/2.5 — stable, contested, no collapse on any run.
+- NOTE: all five were launched at the **default seed 42** (per their
+  `trainer_state.json`). They are *replicates* (variance from CUDA
+  nondeterminism), not a true seed sweep. For paper rigor either rerun with
+  `--seed 1..5` or describe them as "5 independent runs," not "5 seeds."
+
+### Exploitability evaluation (5 runs) — the objective strength verdict
+Ran `exploitability.py` on all five best-model pairs (`exploitability_report.json`
+in each run dir). Aggregate:
+- **NashConv = 0.36 ± 0.06** ("decent"; <0.15 strong, 0.15–0.35 decent, >0.5 brittle).
+- **Attacker exploitability 0.56 ± 0.05, gap 0.11 ± 0.10** — the attacker
+  converged *near a best-response*; a dedicated defender barely does better than
+  the co-trained one.
+- **Defender exploitability 0.80 ± 0.01, gap 0.25 ± 0.07** — a best-response
+  attacker beats the defender 80% of the time (remarkably consistent). The
+  defender is the **weak link**: under-trained relative to its own potential.
+- Encouraging detail: a best-response *defender* wins **0.56** vs the attacker,
+  so the game is NOT structurally attacker-rigged — the defender's co-trained
+  ~0.45 just hasn't reached its ~0.56 ceiling. That 0.11–0.25 gap is what
+  PFSP/PSRO should close.
+- Caveat: exploitability = max over a noisy 150-ep curve, so ~0.02–0.03 inflated;
+  some defender curves hadn't fully flattened (rerun `--br-iterations 40` for the
+  final paper number).
+
+### Publishability assessment (asked 2026-06)
+Good enough **now** for a **workshop / benchmark / experience paper**, framed on
+(1) the reward-design-pitfalls finding (camping / farming / instant-eviction +
+the structural anti-farm rule) and (2) the exploitability methodology — NOT on
+"we trained agents that work" (the algorithm is standard PPO+league). NOT yet a
+top main-track result. Highest-leverage additions before submission, in order:
+true multi-seed → ablations (curriculum/BC/league off → NashConv delta) → one
+improvement result (PFSP closing the defender gap, NashConv before/after).
+Integrity: present it as a controlled simulation of training dynamics, not a
+deployment-ready defender; don't overclaim real-world security impact (dynamics
+aren't calibrated to real data).
+
 ---
 
 ## 16. Roadmap to a proper research project
@@ -483,11 +545,11 @@ roughly ordered; each is independently valuable.
   Optuna for principled reward/hyperparameter search instead of hand-tuning.
 
 ### Phase B — Evaluation science (the real research contribution)
-- **Exploitability / approximate best-response.** The gold standard for
-  self-play quality: freeze the trained attacker (or defender) and train a
-  fresh best-response policy against it; the best-response's win rate measures
-  how *exploitable* the frozen agent is. A truly strong policy is hard to
-  exploit. This is far more meaningful than self-play win rate.
+- **Exploitability / approximate best-response.** ✅ **DONE** —
+  `exploitability.py` implements it; ran on all 5 runs → NashConv 0.36 ± 0.06,
+  defender is the weak link (see §15). Remaining polish: rerun defender probes at
+  `--br-iterations 40` so curves flatten (removes the noise-max caveat) and
+  report the converged number.
 - **Cross-play matrix + empirical Nash.** Build an N×N win-rate matrix over
   archived checkpoints, compute the empirical Nash equilibrium / Nash-averaging
   (Balduzzi et al., *"Re-evaluating Evaluation"*). Detects non-transitivity
@@ -546,11 +608,18 @@ roughly ordered; each is independently valuable.
   AISec at CCS), then a full venue (USENIX Security / ACSAC for the security
   angle, or AAMAS for the MARL angle).
 
-### Suggested immediate order
-1. Finish the balance loop: run the v4.3 full run (multi-seed), confirm the
-   attacker/defender gap narrows; tune with the §13 knobs if needed.
-2. Wire W&B + a frozen eval suite (Phase A) — cheap, makes everything after
-   comparable.
-3. Implement **exploitability eval** (Phase B) — the headline rigor upgrade.
-4. Add **PFSP** (Phase C) if oscillation persists.
-5. Ground in ATT&CK + validate via telemetry (Phase D) for the security story.
+### Suggested immediate order (updated 2026-06 — balance & exploitability DONE)
+1. ✅ Balance loop done (v4.3, ~60/40 over 5 runs). ✅ Exploitability done
+   (NashConv 0.36 ± 0.06; defender is the weak link, gap 0.25).
+2. **Build PFSP** (Phase C) — THE recommended next step. The exploitability
+   result points straight at it: the defender under-responds to the attacker.
+   PFSP (sample league opponents ∝ loss-rate) targets exactly that gap. Then
+   re-run exploitability → "NashConv 0.36 → X" is a headline improvement result.
+   (Alternative: PSRO, which reuses `exploitability.py` as its inner loop — more
+   principled, bigger build.)
+3. **True multi-seed** (`--seed 1..5`) + **ablations** (curriculum/BC/league off
+   → NashConv delta) — the rigor a reviewer will want. Wire **W&B** first so
+   these are comparable.
+4. Ground in ATT&CK + validate via telemetry (Phase D) for the security story.
+5. Write it up: workshop/benchmark/experience paper framed on the reward-design
+   pitfalls + exploitability methodology (see §15 publishability note).
