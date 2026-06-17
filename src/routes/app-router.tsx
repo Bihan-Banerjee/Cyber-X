@@ -34,6 +34,7 @@ import VideoSteganography from "@/pages/tools/VideoSteganography";
 import GoogleDorkGenerator from "@/pages/tools/GoogleDorkGenerator";
 import PacketCapturer from "@/pages/tools/PacketCapturer";
 import RLArena from "@/pages/RLArena";
+import CommandCenter from "@/pages/CommandCenter";
 import WorldMap from '@/components/WorldMap';
 import Guide from "@/pages/Guide";
 import Base64Encoder from "@/pages/tools/Base64Encoder";
@@ -152,6 +153,7 @@ const AppRouter = () => {
         <Route path="/tools/stego-video" element={<VideoSteganography />} />
         <Route path="/tools/google-dorks" element={<GoogleDorkGenerator />} />
         <Route path="/tools/packet-capturer" element={<PacketCapturer />} />
+        <Route path="/command-center" element={<CommandCenter />} />
         <Route path="/honeypots" element={<HoneypotMonitor />} />
         <Route path="/rl-arena" element={<RLArena />} />
         <Route path="/rl-training" element={<RLArena />} />
