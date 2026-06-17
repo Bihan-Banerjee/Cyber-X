@@ -1,344 +1,787 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, Tuple
-import time
+"""
+trainer.py  –  CyberX MARL Trainer  (v3.0)
+============================================
+Pause / Resume:
+  Training saves full state after every completed iteration.
+  Press Ctrl+C once to pause cleanly after the current iteration.
+  Run with --resume to continue from exactly where you left off.
+
+Curriculum:
+  Stage 0 → scripted opponents, restricted actions
+  Stage 1 → scripted opponents, full actions
+  Stage 2 → league self-play (see below)
+
+League (anti-specialization), v3:
+  The v2 trainer gave all workers ONE identical frozen opponent per
+  iteration — PPO fully exploits it within 100k steps and the agents
+  specialize into beating each other while losing to simple scripts.
+  v3 re-rolls a per-worker opponent mix every iteration:
+    • `scripted_slots` workers always face scripted/expert agents
+      (permanent exploiter slots — agents can never forget the basics)
+    • `latest_slots` workers face the opponent's latest weights
+    • the rest face ghosts sampled UNIFORMLY over the full history
+      (recency-biased sampling causes strategy cycling)
+  Best models are gated on a composite score = min(main win rate,
+  vs-scripted, vs-expert): a script-loser can never become *_best.zip.
+
+Performance, v3:
+  Worker pools are created once and kept alive for the entire run;
+  opponents/curriculum hot-swap in place via env_method. Ghosts are
+  zip paths on disk (file copies of *_latest.zip), not in-memory models.
+
+All hyperparameters live in config.json — see config_loader.py.
+"""
+
+import copy
 import json
+import logging
 import os
+import random
+import shutil
+import signal
+import threading
+import time
 from datetime import datetime
-from config_loader import config
-from honeypot_env import HoneypotEnv
-from honeypot_env_sim import HoneypotEnvSimulated
-from attacker_agent import AttackerAgent, AttackerCallback
-from defender_agent import DefenderAgent, DefenderCallback
+from typing import Dict, List, Optional, Tuple
+
+import torch
+from stable_baselines3.common.utils import set_random_seed
+
+from agents import RLAgent
+from baselines import (
+    SCRIPTED_POOL_BY_LEVEL,
+    ExpertAttacker, ExpertDefender,
+    RandomAttacker, RandomDefender,
+    ScriptedAttacker, ScriptedDefender,
+)
+from config_loader import RLConfig, get_config
+from evaluator import MARLEvaluator
+from llm_oracle import LLMOracle
+from progress import (
+    CyberXProgressCallback,
+    print_final_summary,
+    print_iteration_header,
+    print_iteration_summary,
+)
+from shared_honeypot_env import SharedHoneypotEnv
+from vec_env_factory import make_vec_env
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+BANNER = """
+╔══════════════════════════════════════════════════════════╗
+║        CyberX  MARL  Training  System  (v4.0)           ║
+║   APT vs SOC · Curriculum · League · Fictitious Play    ║
+║              LLM Oracle · Elo Evaluation                ║
+╚══════════════════════════════════════════════════════════╝
+"""
+
+# (kind, value) per worker: ("scripted", registry_name) or ("rl", zip_path)
+OpponentMix = List[Tuple[str, str]]
 
 
-class SelfPlayTrainer:
-    """
-    Self-play training system where attacker and defender agents
-    learn by playing against each other iteratively
-    """
-    
+class MARLTrainer:
+    STATE_FILENAME = "trainer_state.json"
+
     def __init__(
         self,
-        elasticsearch_url: str = 'http://localhost:9200',
-        honeypot_host: str = 'localhost',
-        honeypot_port: int = 2222,
-        max_steps: int = 100,
-        save_dir: str = './models',
-        load_pretrained: bool = False
+        save_dir:       str = "./models/cyberx_marl",
+        n_envs:         Optional[int] = None,
+        device:         Optional[str] = None,
+        llm_config:     Optional[Dict] = None,
+        use_subprocess: bool = True,   # run_training.py has the __main__ guard
+        seed:           Optional[int] = None,
+        config:         Optional[RLConfig] = None,
     ):
-        # Create environments
-#        self.attacker_env = HoneypotEnv(
-#            mode='attacker',
-#            elasticsearch_url=elasticsearch_url,
-#            honeypot_host=honeypot_host,
-#            honeypot_port=honeypot_port,
-#            max_steps=max_steps
-#        )
-#        
-#        self.defender_env = HoneypotEnv(
-#            mode='defender',
-#            elasticsearch_url=elasticsearch_url,
-#            honeypot_host=honeypot_host,
-#            honeypot_port=honeypot_port,
-#            max_steps=max_steps
-#        )
+        self.cfg        = config or get_config()
+        self.save_dir   = save_dir
+        self.n_envs     = n_envs if n_envs is not None else self.cfg.training.n_envs
+        self.llm_config = llm_config or {"enabled": False}
+        self.device     = self._resolve_device(device or self.cfg.training.device)
+        self.use_subprocess = use_subprocess
 
-        self.attacker_env = HoneypotEnvSimulated(mode='attacker', max_steps=max_steps)
-        self.defender_env = HoneypotEnvSimulated(mode='defender', max_steps=max_steps)
-        
-        # Create agents
-        self.attacker = AttackerAgent(self.attacker_env, use_llm=True)
-        self.defender = DefenderAgent(self.defender_env)
+        self.seed = seed if seed is not None else self.cfg.seed
+        set_random_seed(self.seed, using_cuda=(self.device == "cuda"))
+        random.seed(self.seed)   # opponent sampling below uses `random`
 
-        # Load pre-trained or best models if requested
-        if load_pretrained:
-            pretrained_path = 'models/pretrained/attacker_pretrained.zip'
-            if os.path.exists(pretrained_path):
-                print(f"📂 Loading pre-trained attacker from {pretrained_path}")
-                self.attacker.load(pretrained_path)
-            else:
-                print(f"⚠️  Pre-trained model not found, starting from scratch")
+        for d in [save_dir, f"{save_dir}/ghosts", f"{save_dir}/checkpoints",
+                  "./data/oracle_datasets", "./logs"]:
+            os.makedirs(d, exist_ok=True)
 
-        
-        self.save_dir = save_dir
-        os.makedirs(save_dir, exist_ok=True)
-        
-        # Training history
-        self.training_history = {
-            'iterations': [],
-            'attacker_rewards': [],
-            'defender_rewards': [],
-            'attack_success_rates': [],
-            'detection_rates': [],
-            'timestamps': []
+        # Mutable training state — persisted in trainer_state.json
+        self._curr_level         = 0
+        self._stage_promo_streak = 0
+        self._stage_iter_count   = 0
+        self._start_iteration    = 1
+        self._att_ghost_paths: List[str] = []
+        self._def_ghost_paths: List[str] = []
+        self._best_score = {"attacker": -1.0, "defender": -1.0}
+
+        # ── Persistent worker pools: created ONCE, opponents hot-swapped ──
+        t0 = time.time()
+        self._att_envs = make_vec_env(
+            "attacker", self.n_envs, self._curr_level,
+            opponent_names=self._initial_scripted_names("attacker"),
+            use_subprocess=use_subprocess,
+        )
+        self._def_envs = make_vec_env(
+            "defender", self.n_envs, self._curr_level,
+            opponent_names=self._initial_scripted_names("defender"),
+            use_subprocess=use_subprocess,
+        )
+        print(f"  Envs ready ({time.time()-t0:.1f}s)", flush=True)
+
+        tb_dir = self.cfg.logging.get("tensorboard_dir", "./logs")
+        t0 = time.time()
+        self.attacker = RLAgent(self._att_envs, "attacker", self.cfg.ppo,
+                                self.device, seed=self.seed, tensorboard_dir=tb_dir)
+        print(f"  Attacker ready ({time.time()-t0:.1f}s)", flush=True)
+
+        t0 = time.time()
+        # seed+1: identical seeds would give both agents identical init for
+        # every same-shaped layer
+        self.defender = RLAgent(self._def_envs, "defender", self.cfg.ppo,
+                                self.device, seed=self.seed + 1, tensorboard_dir=tb_dir)
+        print(f"  Defender ready ({time.time()-t0:.1f}s)", flush=True)
+
+        self.evaluator  = MARLEvaluator(save_dir=f"{save_dir}/results")
+        self.att_oracle = LLMOracle("attacker", self.llm_config)
+        self.def_oracle = LLMOracle("defender", self.llm_config)
+
+        self.history: Dict = {
+            "iterations": [], "curriculum_levels": [],
+            "att_win_rates": [], "def_win_rates": [],
+            "att_elo": [], "def_elo": [], "timestamps": [],
         }
-    
-    def train_self_play(
+
+        self._pause_requested = False
+        self._run_start:  float = time.time()
+        self._iter_times: List[float] = []
+        signal.signal(signal.SIGINT, self._handle_sigint)
+
+        print(BANNER)
+        logger.info("Trainer ready.  Device=%s  seed=%d  dir=%s",
+                    self.device, self.seed, save_dir)
+
+    # ── Resource cleanup ───────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        """Close the persistent SubprocVecEnv pools. Critical on crash/exit:
+        each pool spawns n_envs worker processes (~0.5 GB each), and if the
+        trainer dies without closing them they orphan and leak. With the
+        auto-restart supervisor stacking a fresh process on top, repeated
+        crashes otherwise compound into an out-of-memory failure."""
+        for pool in (getattr(self, "_att_envs", None), getattr(self, "_def_envs", None)):
+            try:
+                if pool is not None:
+                    pool.close()
+            except Exception:
+                pass
+
+    # ── Device resolution ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _resolve_device(requested: str) -> str:
+        """Resolve 'auto' to the best available device with a clear diagnostic.
+
+        Common cause of GPU not being used on Windows:
+          pip install torch  →  installs the CPU-only build by default.
+          Check: torch.version.cuda — if None, you have the CPU build.
+          Fix:   pip install torch --index-url https://download.pytorch.org/whl/cu121
+        """
+        cuda_ok = torch.cuda.is_available()
+        resolved = ("cuda" if cuda_ok else "cpu") if requested == "auto" else requested
+        if resolved == "cuda" and not cuda_ok:
+            print("  WARNING: device='cuda' requested but CUDA unavailable. Using CPU.")
+            resolved = "cpu"
+
+        print("\n  ── Device check ────────────────────────────────────")
+        print(f"  CUDA available  : {cuda_ok}")
+        if cuda_ok:
+            print(f"  GPU             : {torch.cuda.get_device_name(0)}")
+            print(f"  CUDA version    : {torch.version.cuda}")
+            vram = torch.cuda.get_device_properties(0).total_memory / 1e9
+            print(f"  VRAM            : {vram:.1f} GB")
+        print(f"  PyTorch build   : {torch.__version__}")
+        if not cuda_ok:
+            print("  Note: CUDA not found. If you have an NVIDIA GPU:")
+            print("  pip install torch --index-url https://download.pytorch.org/whl/cu121")
+        print(f"  Active device   : {resolved.upper()}")
+        print("  ────────────────────────────────────────────────────\n")
+        return resolved
+
+    # ── Graceful pause on Ctrl+C ───────────────────────────────────────────────
+
+    def _handle_sigint(self, sig, frame):
+        if not self._pause_requested:
+            print("\n\n  Pause requested. Finishing current iteration then saving...")
+            print("  Press Ctrl+C again to force-quit (unsaved progress lost).\n")
+            self._pause_requested = True
+        else:
+            raise KeyboardInterrupt
+
+    # ── League: per-worker opponent mixing ─────────────────────────────────────
+
+    def _initial_scripted_names(self, role: str) -> List[str]:
+        pool = SCRIPTED_POOL_BY_LEVEL[role][self._curr_level]
+        return [random.choice(pool) for _ in range(self.n_envs)]
+
+    def _latest_opponent_path(self, role: str) -> str:
+        """The opponent of `role` is the other agent's latest snapshot."""
+        other = "defender" if role == "attacker" else "attacker"
+        return f"{self.save_dir}/{other}_latest.zip"
+
+    def _roll_opponent_mix(self, role: str) -> OpponentMix:
+        """
+        Per-worker opponent assignment for this iteration.
+
+        Levels 0-1: every worker independently samples from the scripted
+        pool, so each PPO update contains experience against multiple
+        opponent styles (the core anti-specialization mechanism).
+
+        Level 2: league mix — scripted exploiter slots + latest opponent
+        + ghosts sampled uniformly over the full history.
+        """
+        pool = SCRIPTED_POOL_BY_LEVEL[role][self._curr_level]
+        if self._curr_level < 2:
+            return [("scripted", random.choice(pool)) for _ in range(self.n_envs)]
+
+        ghosts = (self._def_ghost_paths if role == "attacker"
+                  else self._att_ghost_paths)
+        ghosts = [p for p in ghosts if os.path.exists(p)]
+        latest = self._latest_opponent_path(role)
+        has_latest = os.path.exists(latest)
+
+        n = self.n_envs
+        n_scripted = min(self.cfg.league.scripted_slots, n)
+        n_latest   = min(self.cfg.league.latest_slots, n - n_scripted) if has_latest else 0
+        # Ghost slots are capped at the number of DISTINCT ghosts and drawn
+        # without replacement. Early at level 2 the pool holds one ghost
+        # that IS yesterday's latest — filling 4 slots with it gives 6/8
+        # workers the same opponent, which is exactly the specialization
+        # pressure the league exists to prevent. Surplus slots fall back to
+        # scripted opponents until the pool deepens.
+        n_ghost = min(n - n_scripted - n_latest, len(ghosts))
+
+        mix: OpponentMix = [("scripted", random.choice(pool))
+                            for _ in range(n_scripted)]
+        mix += [("rl", latest)] * n_latest
+        mix += [("rl", g) for g in random.sample(ghosts, n_ghost)]
+        while len(mix) < n:
+            mix.append(("scripted", random.choice(pool)))
+        return mix
+
+    def _apply_opponent_mix(self, vec_env, mix: OpponentMix) -> None:
+        for i, (kind, value) in enumerate(mix):
+            if kind == "scripted":
+                vec_env.env_method("set_scripted_opponent", value, indices=[i])
+            else:
+                vec_env.env_method("load_rl_opponent", value, indices=[i])
+
+    @staticmethod
+    def _describe_mix(mix: OpponentMix) -> str:
+        counts: Dict[str, int] = {}
+        for kind, value in mix:
+            label = value if kind == "scripted" else os.path.basename(value)
+            counts[label] = counts.get(label, 0) + 1
+        return ", ".join(f"{n}×{name}" for name, n in sorted(counts.items()))
+
+    # ── Entropy warmup (replaces the buffer-corrupting epsilon callback) ──────
+
+    def _ent_coef_for(self, role: str, iteration: int) -> float:
+        base = self.cfg.ppo.ent_coef[role]
+        warmup_iters = self.cfg.ppo.warmup_iters
+        if iteration > warmup_iters:
+            return base
+        start = max(self.cfg.ppo.warmup_ent_coef, base)
+        frac = (iteration - 1) / max(warmup_iters, 1)
+        return start + (base - start) * frac
+
+    # ── State persistence ──────────────────────────────────────────────────────
+
+    def save_state(self, completed_iteration: int) -> None:
+        """Save everything needed to resume. Called after every iteration."""
+        att_path = f"{self.save_dir}/attacker_latest.zip"
+        def_path = f"{self.save_dir}/defender_latest.zip"
+        self.attacker.save(att_path)
+        self.defender.save(def_path)
+
+        state = {
+            "version":            "3.0",
+            "saved_at":           datetime.utcnow().isoformat(),
+            "seed":               self.seed,
+            "next_iteration":     completed_iteration + 1,
+            "curr_level":         self._curr_level,
+            "stage_promo_streak": self._stage_promo_streak,
+            "stage_iter_count":   self._stage_iter_count,
+            "att_ghost_paths":    self._att_ghost_paths,
+            "def_ghost_paths":    self._def_ghost_paths,
+            "best_score":         self._best_score,
+            "attacker_path":      att_path,
+            "defender_path":      def_path,
+            "history":            self.history,
+            "elo":                self.evaluator.elo.to_dict(),
+        }
+        state_path = os.path.join(self.save_dir, self.STATE_FILENAME)
+        with open(state_path, "w") as f:
+            json.dump(state, f, indent=2, default=str)
+        logger.info("State saved → iter %d complete, resume from %d",
+                    completed_iteration, completed_iteration + 1)
+
+    def load_state(self) -> bool:
+        """Load saved state if it exists. Returns True if resumed."""
+        state_path = os.path.join(self.save_dir, self.STATE_FILENAME)
+        if not os.path.exists(state_path):
+            return False
+
+        with open(state_path) as f:
+            s = json.load(f)
+
+        print(f"\n  Resuming from iteration {s['next_iteration']}")
+        print(f"  Last saved: {s['saved_at']}")
+        print(f"  Curriculum level: {s['curr_level']}")
+        print(f"  Completed iterations: {len(s['history'].get('iterations', []))}\n")
+
+        self._start_iteration     = s["next_iteration"]
+        self._curr_level          = s["curr_level"]
+        self._stage_promo_streak  = s["stage_promo_streak"]
+        self._stage_iter_count    = s["stage_iter_count"]
+        self._att_ghost_paths     = [p for p in s.get("att_ghost_paths", [])
+                                     if os.path.exists(p)]
+        self._def_ghost_paths     = [p for p in s.get("def_ghost_paths", [])
+                                     if os.path.exists(p)]
+        self._best_score          = s.get("best_score", self._best_score)
+        self.history              = s["history"]
+        self.evaluator.elo.from_dict(s.get("elo", {}))
+
+        # Restore evaluator metrics for accurate plots after resume
+        metrics_path = f"{self.save_dir}/results/training_metrics.json"
+        if os.path.exists(metrics_path):
+            with open(metrics_path) as f:
+                self.evaluator.all_metrics = json.load(f)
+
+        for path, label, agent in [
+            (s.get("attacker_path"), "Attacker", self.attacker),
+            (s.get("defender_path"), "Defender", self.defender),
+        ]:
+            if path and os.path.exists(path):
+                t0 = time.time()
+                agent.load(path)
+                logger.info("Loaded %s from %s  (%.1fs)", label, path, time.time()-t0)
+            else:
+                logger.warning("%s not found at %s — starting fresh", label, path)
+
+        # Pools were built at level 0 in __init__ — sync them to the
+        # restored level in place (no rebuild).
+        if self._curr_level > 0:
+            self._att_envs.env_method("set_curriculum_level", self._curr_level)
+            self._def_envs.env_method("set_curriculum_level", self._curr_level)
+
+        logger.info("Ghost pools: %d att, %d def (paths only)",
+                    len(self._att_ghost_paths), len(self._def_ghost_paths))
+        return True
+
+    # ── Main training loop ─────────────────────────────────────────────────────
+
+    def train(
         self,
-        n_iterations: int = 10,
-        timesteps_per_iteration: int = 10000,
-        eval_episodes: int = 5
-    ):
-        """
-        Self-play training loop:
-        1. Train attacker against current defender
-        2. Train defender against current attacker
-        3. Evaluate both
-        4. Repeat
-        """
-        print("🚀 Starting Self-Play Training Loop")
-        print(f"Iterations: {n_iterations}")
-        print(f"Timesteps per iteration: {timesteps_per_iteration}")
-        print("="*60)
-        
-        for iteration in range(1, n_iterations + 1):
-            print(f"\n{'='*60}")
-            print(f"🔄 ITERATION {iteration}/{n_iterations}")
-            print(f"{'='*60}\n")
-            
-            start_time = time.time()
-            
-            # Phase 1: Train Attacker
-            print(f"\n--- Phase 1: Training Attacker ---")
-            attacker_callback = AttackerCallback()
-            self.attacker.train(
-                total_timesteps=timesteps_per_iteration,
-                callback=attacker_callback,
-                log_interval=10
+        n_iterations:         Optional[int] = None,
+        timesteps_per_iter:   Optional[int] = None,
+        eval_episodes:        Optional[int] = None,
+        run_bc_phase:         bool = True,
+        run_llm_oracle_phase: bool = False,
+        resume:               bool = False,
+    ) -> Dict:
+        """Full training run. Pass resume=True to continue from saved state.
+        Press Ctrl+C at any time to pause cleanly after the current iteration."""
+        n_iterations       = n_iterations       or self.cfg.training.n_iterations
+        timesteps_per_iter = timesteps_per_iter or self.cfg.training.timesteps_per_iter
+        eval_episodes      = eval_episodes      or self.cfg.training.eval_episodes
+
+        if resume:
+            if not self.load_state():
+                logger.info("No saved state found at %s — starting fresh.", self.save_dir)
+
+        self._run_start = time.time()
+        fresh_start = (self._start_iteration == 1)
+
+        if run_bc_phase and fresh_start:
+            self._phase_behavioral_cloning()
+
+        if run_llm_oracle_phase and self.llm_config.get("enabled") and fresh_start:
+            self._phase_llm_oracle_cloning()
+
+        for iteration in range(self._start_iteration, n_iterations + 1):
+            try:
+                self._run_iteration(iteration, n_iterations,
+                                    timesteps_per_iter, eval_episodes)
+            except (EOFError, BrokenPipeError, ConnectionResetError):
+                # On Windows, Ctrl+C reaches the SubprocVecEnv workers too;
+                # if they die before the iteration finishes, the pipes break.
+                # When a pause was requested this is a graceful stop, not a
+                # crash — state from the last completed iteration is saved.
+                if self._pause_requested:
+                    print("\n  Paused mid-iteration (env workers interrupted)."
+                          f"\n  To resume:  python run_training.py --resume"
+                          f"\n  State file: {self.save_dir}/{self.STATE_FILENAME}\n")
+                    return self.history
+                raise
+
+            if self._pause_requested:
+                print(f"\n  Training paused after iteration {iteration}.")
+                print(f"  To resume:  python run_training.py --resume")
+                print(f"  State file: {self.save_dir}/{self.STATE_FILENAME}\n")
+                break
+
+        self._save_final()
+        return self.history
+
+    def _run_iteration(
+        self,
+        iteration:          int,
+        n_iterations:       int,
+        timesteps_per_iter: int,
+        eval_episodes:      int,
+    ) -> None:
+        iter_t0 = time.time()
+
+        print_iteration_header(
+            iteration        = iteration,
+            n_iterations     = n_iterations,
+            curriculum_level = self._curr_level,
+            run_start        = self._run_start,
+            iter_times       = self._iter_times,
+        )
+
+        self._save_ghost(iteration)
+
+        # ── League: roll and apply this iteration's opponent mix ────────
+        att_mix = self._roll_opponent_mix("attacker")
+        def_mix = self._roll_opponent_mix("defender")
+        self._apply_opponent_mix(self._att_envs, att_mix)
+        self._apply_opponent_mix(self._def_envs, def_mix)
+        print(f"  Attacker vs: {self._describe_mix(att_mix)}")
+        print(f"  Defender vs: {self._describe_mix(def_mix)}")
+
+        curr_timesteps = self.cfg.curriculum.timesteps_for(
+            self._curr_level, timesteps_per_iter)
+        curr_eval_eps = self.cfg.curriculum.eval_episodes_for(
+            self._curr_level, eval_episodes)
+        print(f"  Timesteps: {curr_timesteps:,}   Eval episodes: {curr_eval_eps}"
+              f"   Envs: {self.n_envs}")
+
+        # ── Train both sides on the persistent pools ────────────────────
+        callbacks = {}
+        for role, agent in (("attacker", self.attacker),
+                            ("defender", self.defender)):
+            ent_coef = self._ent_coef_for(role, iteration)
+            agent.model.ent_coef = ent_coef
+            if iteration <= self.cfg.ppo.warmup_iters:
+                print(f"  {role.capitalize()} entropy warmup: "
+                      f"ent_coef={ent_coef:.3f}")
+
+            cb = CyberXProgressCallback(
+                total_timesteps = curr_timesteps,
+                role            = role,
+                iteration       = iteration,
+                n_iterations    = n_iterations,
+                iteration_start = iter_t0,
+                run_start       = self._run_start,
+                device          = self.device,
             )
-            
-            # Phase 2: Train Defender
-            print(f"\n--- Phase 2: Training Defender ---")
-            defender_callback = DefenderCallback()
-            self.defender.train(
-                total_timesteps=timesteps_per_iteration,
-                callback=defender_callback,
-                log_interval=10
+            callbacks[role] = cb
+            agent.model.learn(
+                total_timesteps     = curr_timesteps,
+                reset_num_timesteps = False,
+                tb_log_name         = role,
+                callback            = cb,
             )
-            
-            # Phase 3: Evaluate both agents
-            print(f"\n--- Phase 3: Evaluation ---")
-            attacker_results = self.attacker.evaluate(n_episodes=eval_episodes)
-            defender_results = self.defender.evaluate(n_episodes=eval_episodes)
-            
-            # Log results
-            iteration_time = time.time() - start_time
-            self._log_iteration(iteration, attacker_results, defender_results, iteration_time)
-            
-            # Save models periodically
-            if iteration % 2 == 0:
-                self.save_models(iteration)
-            
-            # Plot progress
-            if iteration % 5 == 0:
-                self.plot_training_progress()
-        
-        print(f"\n{'='*60}")
-        print("✅ Self-Play Training Complete!")
-        print(f"{'='*60}\n")
-        
-        # Final save and plots
-        self.save_models(n_iterations)
-        self.plot_training_progress()
-        self.save_training_history()
-    
-    def train_alternating(
-        self,
-        n_rounds: int = 5,
-        attacker_timesteps: int = 20000,
-        defender_timesteps: int = 20000
-    ):
-        """
-        Alternating training: train one agent at a time
-        """
-        print("🎯 Starting Alternating Training")
-        print(f"Rounds: {n_rounds}")
-        print("="*60)
-        
-        for round_num in range(1, n_rounds + 1):
-            print(f"\n{'='*60}")
-            print(f"🔄 ROUND {round_num}/{n_rounds}")
-            print(f"{'='*60}\n")
-            
-            # Train attacker
-            print("🔴 Training Attacker...")
-            self.attacker.train(total_timesteps=attacker_timesteps)
-            attacker_results = self.attacker.evaluate(n_episodes=5)
-            
-            # Train defender against improved attacker
-            print("\n🔵 Training Defender...")
-            self.defender.train(total_timesteps=defender_timesteps)
-            defender_results = self.defender.evaluate(n_episodes=5)
-            
-            # Log and save
-            self._log_iteration(round_num, attacker_results, defender_results, 0)
-            self.save_models(round_num)
-        
-        print("\n✅ Alternating Training Complete!")
-        self.plot_training_progress()
-    
-    def _log_iteration(
-        self,
-        iteration: int,
-        attacker_results: Dict,
-        defender_results: Dict,
-        iteration_time: float
-    ):
-        """Log iteration metrics"""
-        self.training_history['iterations'].append(iteration)
-        self.training_history['attacker_rewards'].append(attacker_results['mean_reward'])
-        self.training_history['defender_rewards'].append(defender_results['mean_reward'])
-        self.training_history['attack_success_rates'].append(attacker_results['success_rate'])
-        self.training_history['detection_rates'].append(attacker_results['detection_rate'])
-        self.training_history['timestamps'].append(datetime.now().isoformat())
-        
-        print(f"\n📊 Iteration {iteration} Summary:")
-        print(f"  Time: {iteration_time:.1f}s")
-        print(f"  Attacker Reward: {attacker_results['mean_reward']:.2f}")
-        print(f"  Defender Reward: {defender_results['mean_reward']:.2f}")
-        print(f"  Attack Success Rate: {attacker_results['success_rate']:.2%}")
-        print(f"  Detection Rate: {attacker_results['detection_rate']:.2%}")
-    
-    def save_models(self, iteration: int):
-        """Save both agent models"""
-        attacker_path = f"{self.save_dir}/attacker_iter_{iteration}.zip"
-        defender_path = f"{self.save_dir}/defender_iter_{iteration}.zip"
-        
-        self.attacker.save(attacker_path)
-        self.defender.save(defender_path)
-        
-        print(f"\n💾 Models saved (Iteration {iteration})")
-    
-    def load_models(self, iteration: int):
-        """Load both agent models"""
-        attacker_path = f"{self.save_dir}/attacker_iter_{iteration}.zip"
-        defender_path = f"{self.save_dir}/defender_iter_{iteration}.zip"
-        
-        self.attacker.load(attacker_path)
-        self.defender.load(defender_path)
-        
-        print(f"📂 Models loaded (Iteration {iteration})")
-    
-    def save_training_history(self):
-        """Save training history to JSON"""
-        history_path = f"{self.save_dir}/training_history.json"
-        with open(history_path, 'w') as f:
-            json.dump(self.training_history, f, indent=2)
-        print(f"💾 Training history saved to {history_path}")
-    
-    def plot_training_progress(self):
-        """Plot training metrics"""
-        if not self.training_history['iterations']:
-            print("No training history to plot")
+
+        # Checkpoint — runs in a background thread so disk I/O never
+        # blocks the loop. Level 0-1: every 5 iterations.
+        should_checkpoint = (
+            n_iterations > 2 and
+            (self._curr_level == 2 or iteration % 5 == 0)
+        )
+        if should_checkpoint:
+            print("  Saving checkpoint (async)...", flush=True)
+            self._checkpoint_async(iteration)
+
+        # At level 0, skip baseline matches — only the main match
+        # informs promotion there, and it saves ~50 min/iteration.
+        run_baselines = self._curr_level > 0
+        n_matches = 7 if run_baselines else 1
+        print(f"  Evaluating ({curr_eval_eps * n_matches} eps, "
+              f"{n_matches} match{'es' if n_matches > 1 else ''})...", flush=True)
+
+        metrics = self.evaluator.evaluate_iteration(
+            iteration        = iteration,
+            attacker         = self.attacker,
+            defender         = self.defender,
+            baselines_att    = {
+                "random":   RandomAttacker(),
+                "scripted": ScriptedAttacker(),
+                "expert":   ExpertAttacker(),
+            } if run_baselines else {},
+            baselines_def    = {
+                "random":   RandomDefender(),
+                "scripted": ScriptedDefender(),
+                "expert":   ExpertDefender(),
+            } if run_baselines else {},
+            n_episodes       = curr_eval_eps,
+            curriculum_level = self._curr_level,
+            silent           = True,
+        )
+
+        iter_elapsed = time.time() - iter_t0
+        self._iter_times.append(iter_elapsed)
+
+        self._update_history(iteration, metrics)
+        self._update_best_models(metrics)
+        self._check_curriculum_promotion(metrics)
+        self._stage_iter_count += 1
+
+        print_iteration_summary(
+            iteration     = iteration,
+            n_iterations  = n_iterations,
+            metrics       = metrics,
+            history       = self.history,
+            iter_elapsed  = iter_elapsed,
+            run_start     = self._run_start,
+            att_callback  = callbacks["attacker"],
+            def_callback  = callbacks["defender"],
+        )
+
+        if iteration % self.cfg.logging.get("save_plots_every_n_iters", 5) == 0:
+            self.evaluator.plot_training_curves()
+            self.evaluator.plot_action_heatmap(iteration)
+
+        self.save_state(iteration)
+
+    # ── Phase 0 helpers ────────────────────────────────────────────────────────
+
+    def _phase_behavioral_cloning(self) -> None:
+        print(f"\n{'─'*62}\n  PHASE 0-A  –  Behavioral Cloning\n{'─'*62}")
+        steps = [
+            ("attacker", ScriptedAttacker, ScriptedDefender, 0, 500),
+            ("defender", ScriptedDefender, ScriptedAttacker, 0, 500),
+            ("attacker", ExpertAttacker,   ExpertDefender,   1, 300),
+            ("defender", ExpertDefender,   ExpertAttacker,   1, 300),
+        ]
+        for mode, exp_cls, opp_cls, level, n_ep in steps:
+            env = SharedHoneypotEnv(mode=mode, curriculum_level=level,
+                                    opponent_model=opp_cls())
+            env.reset(seed=self.seed)
+            agent = self.attacker if mode == "attacker" else self.defender
+            agent.pretrain_on_expert(exp_cls(), env, num_episodes=n_ep, epochs=20)
+
+    def _phase_llm_oracle_cloning(self) -> None:
+        print(f"\n{'─'*62}\n  PHASE 0-B  –  LLM Oracle Cloning\n{'─'*62}")
+        for role, oracle, path in [
+            ("attacker", self.att_oracle,
+             "./data/oracle_datasets/attacker_oracle.npz"),
+            ("defender", self.def_oracle,
+             "./data/oracle_datasets/defender_oracle.npz"),
+        ]:
+            self._collect_oracle_rollouts(role, oracle, path)
+            agent = self.attacker if role == "attacker" else self.defender
+            if os.path.exists(path):
+                agent.pretrain_on_dataset(path, epochs=15)
+
+    def _collect_oracle_rollouts(self, role, oracle, save_path, n_episodes=200):
+        opp = ScriptedDefender() if role == "attacker" else ScriptedAttacker()
+        env = SharedHoneypotEnv(mode=role, curriculum_level=1, opponent_model=opp)
+        env.reset(seed=self.seed)
+        for _ in range(n_episodes):
+            obs, _ = env.reset()
+            cum_r, done = 0.0, False
+            while not done:
+                action = oracle.query(obs, cum_reward=cum_r, max_steps=env.max_steps)
+                if action is None:
+                    action, _ = opp.predict(obs)
+                obs_b = obs.copy()
+                obs, r, term, trunc, _ = env.step(int(action))
+                oracle.record_transition(obs_b, action, r)
+                cum_r += r
+                done = term or trunc
+        oracle.save_dataset(save_path)
+
+    # ── League: ghost snapshots (paths only) ───────────────────────────────────
+
+    def _save_ghost(self, iteration: int) -> None:
+        """Snapshot both agents into the ghost pools. Ghosts are plain file
+        copies of *_latest.zip (written by save_state last iteration) — no
+        GPU serialisation, no in-memory model duplicates."""
+        if self._curr_level < 2:
             return
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('CyberX Self-Play Training Progress', fontsize=16)
-        
-        iterations = self.training_history['iterations']
-        
-        # Plot 1: Rewards
-        axes[0, 0].plot(iterations, self.training_history['attacker_rewards'], 
-                       'r-', label='Attacker', linewidth=2)
-        axes[0, 0].plot(iterations, self.training_history['defender_rewards'], 
-                       'b-', label='Defender', linewidth=2)
-        axes[0, 0].set_xlabel('Iteration')
-        axes[0, 0].set_ylabel('Mean Reward')
-        axes[0, 0].set_title('Agent Rewards Over Time')
-        axes[0, 0].legend()
-        axes[0, 0].grid(True, alpha=0.3)
-        
-        # Plot 2: Attack Success Rate
-        axes[0, 1].plot(iterations, self.training_history['attack_success_rates'], 
-                       'g-', linewidth=2)
-        axes[0, 1].set_xlabel('Iteration')
-        axes[0, 1].set_ylabel('Success Rate')
-        axes[0, 1].set_title('Attack Success Rate')
-        axes[0, 1].grid(True, alpha=0.3)
-        axes[0, 1].set_ylim([0, 1])
-        
-        # Plot 3: Detection Rate
-        axes[1, 0].plot(iterations, self.training_history['detection_rates'], 
-                       'orange', linewidth=2)
-        axes[1, 0].set_xlabel('Iteration')
-        axes[1, 0].set_ylabel('Detection Rate')
-        axes[1, 0].set_title('Attacker Detection Rate')
-        axes[1, 0].grid(True, alpha=0.3)
-        axes[1, 0].set_ylim([0, 1])
-        
-        # Plot 4: Win Rate Balance
-        axes[1, 1].bar(['Attacker', 'Defender'], 
-                      [np.mean(self.training_history['attack_success_rates']),
-                       np.mean(self.training_history['detection_rates'])],
-                      color=['red', 'blue'])
-        axes[1, 1].set_ylabel('Average Rate')
-        axes[1, 1].set_title('Overall Performance Balance')
-        axes[1, 1].set_ylim([0, 1])
-        axes[1, 1].grid(True, alpha=0.3, axis='y')
-        
-        plt.tight_layout()
-        plot_path = f"{self.save_dir}/training_progress.png"
-        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-        print(f"📈 Training plots saved to {plot_path}")
-        plt.close()
-    
-    def demonstrate(self, n_episodes: int = 3):
-        """Run demonstration episodes with trained agents"""
-        print("\n🎬 Running Demonstration Episodes")
-        print("="*60)
-        
-        for episode in range(1, n_episodes + 1):
-            print(f"\n--- Episode {episode} ---")
-            
-            # Attacker episode
-            obs, _ = self.attacker_env.reset()
-            done = False
-            truncated = False
-            total_reward = 0
-            
-            print("\n🔴 Attacker Actions:")
-            while not (done or truncated):
-                action = self.attacker.predict(obs, deterministic=True)
-                obs, reward, done, truncated, info = self.attacker_env.step(action)
-                total_reward += reward
-                
-                print(f"  Step {info['step']}: {info['action_name']} | Reward: {reward:.2f}")
-                
-                if done:
-                    print(f"  ❌ Episode terminated: {info.get('error', 'Detected')}")
-            
-            print(f"  Total Reward: {total_reward:.2f}")
-        
-        print("\n✅ Demonstration complete!")
+        for role, paths in (("attacker", self._att_ghost_paths),
+                            ("defender", self._def_ghost_paths)):
+            latest = f"{self.save_dir}/{role}_latest.zip"
+            if not os.path.exists(latest):
+                logger.warning("Ghost skip: %s missing", latest)
+                continue
+            ghost = f"{self.save_dir}/ghosts/{role[:3]}_{iteration}.zip"
+            shutil.copy(latest, ghost)
+            paths.append(ghost)
+            while len(paths) > self.cfg.league.ghost_pool_max:
+                paths.pop(0)   # drop from pool; file stays on disk for analysis
 
+    # ── Best-model gating ──────────────────────────────────────────────────────
 
-def main():
-    """Main training script"""
-    print("="*60)
-    print(" CyberX RL Training System")
-    print("  Attacker vs Defender Self-Play")
-    print("="*60)
-    
-    # Initialize trainer
-    trainer = SelfPlayTrainer(
-        elasticsearch_url='http://localhost:9200',
-        honeypot_host='localhost',
-        honeypot_port=2222,
-        max_steps=100,
-        save_dir='./models/cyberx'
-    )
-    
-    # Run self-play training
-    trainer.train_self_play(
-        n_iterations=10,
-        timesteps_per_iteration=10000,
-        eval_episodes=5
-    )
-    
-    # Demonstrate trained agents
-    trainer.demonstrate(n_episodes=3)
+    def _composite_score(self, metrics: Dict, role: str) -> float:
+        """min(main win rate, vs-scripted, vs-expert) — the anti-specialization
+        gate. At level 0 baselines aren't run, so it's the main rate only."""
+        key = "att_win_rate" if role == "attacker" else "def_win_rate"
+        scores = [metrics.get("main_match", {}).get(key, 0.0)]
+        vs = metrics.get(f"{'att' if role == 'attacker' else 'def'}_vs_baselines", {})
+        for bname in ("scripted", "expert"):
+            wr = (vs.get(bname) or {}).get(key)
+            if wr is not None:
+                scores.append(wr)
+        return min(scores)
 
+    def _update_best_models(self, metrics: Dict) -> None:
+        # Level 0 runs no baseline matches, so the composite would be the
+        # main-match rate alone — a script-naive policy could lock in a high
+        # score that level-1+ composites (which include the script gates)
+        # can never beat. Only gate best models once baselines run.
+        if self._curr_level == 0:
+            return
+        for role, agent in (("attacker", self.attacker),
+                            ("defender", self.defender)):
+            score = self._composite_score(metrics, role)
+            if score > self._best_score[role]:
+                self._best_score[role] = score
+                best_path = f"{self.save_dir}/{role}_best.zip"
+                agent.save(best_path)
+                print(f"  New best {role}: composite score {score:.2f} "
+                      f"→ {os.path.basename(best_path)}")
 
-if __name__ == "__main__":
-    main()
+    # ── Curriculum ─────────────────────────────────────────────────────────────
+
+    def _check_curriculum_promotion(self, metrics: Dict) -> None:
+        if self._curr_level >= 2:
+            return
+        cur = self.cfg.curriculum
+
+        att_wr = (metrics.get("att_vs_baselines", {})
+                         .get("scripted", {}).get("att_win_rate"))
+        def_wr = (metrics.get("def_vs_baselines", {})
+                         .get("scripted", {}).get("def_win_rate"))
+
+        if att_wr is None:
+            # Level 0: baselines not run — fall back to the main match.
+            # A competent attacker should win >55% there; the defender is
+            # naturally disadvantaged vs a scripted attacker at level 0.
+            att_wr = metrics.get("main_match", {}).get("att_win_rate", 0)
+            promote = att_wr >= 0.55
+        else:
+            promote = (att_wr >= cur.promo_threshold
+                       and def_wr >= cur.promo_threshold)
+
+        if promote:
+            self._stage_promo_streak += 1
+        else:
+            self._stage_promo_streak = 0
+
+        if (self._stage_promo_streak >= cur.promo_streak
+                or self._stage_iter_count >= cur.max_stage_iterations):
+            self._curr_level += 1
+            self._stage_promo_streak = self._stage_iter_count = 0
+            print(f"\n  CURRICULUM ADVANCE → Stage {self._curr_level}")
+            # Hot-swap the level on the live pools — no rebuild
+            self._att_envs.env_method("set_curriculum_level", self._curr_level)
+            self._def_envs.env_method("set_curriculum_level", self._curr_level)
+            # Re-anchor both agents to winning scripted play that USES the
+            # newly unlocked actions. Without this, expanding the action set
+            # mid-training stranded the old policy in a losing local optimum
+            # (the iter-3 attacker collapse). A short BC refresh is cheap
+            # insurance against that shock.
+            self._bc_refresh(self._curr_level)
+
+    def _bc_refresh(self, level: int) -> None:
+        """Quick behavioral-cloning pass on the level-appropriate experts so
+        each agent starts the new curriculum stage from a competent policy
+        rather than re-discovering the (now larger) action space from
+        scratch under a strong opponent."""
+        att_exp = ScriptedAttacker if level == 0 else ExpertAttacker
+        def_exp = ScriptedDefender if level == 0 else ExpertDefender
+        print("  BC refresh for the newly unlocked actions...")
+        for mode, exp_cls, opp_cls in (
+            ("attacker", att_exp, def_exp),
+            ("defender", def_exp, att_exp),
+        ):
+            env = SharedHoneypotEnv(mode=mode, curriculum_level=level,
+                                    opponent_model=opp_cls())
+            env.reset(seed=self.seed)
+            agent = self.attacker if mode == "attacker" else self.defender
+            agent.pretrain_on_expert(exp_cls(), env, num_episodes=150, epochs=8)
+
+    # ── Checkpointing ──────────────────────────────────────────────────────────
+
+    def _checkpoint_async(self, iteration: int) -> None:
+        """Save policy state dicts in a background daemon thread so disk
+        I/O never blocks the next training iteration. Snapshots are copied
+        to CPU on the main thread first, so the background thread performs
+        no CUDA operations concurrently with training."""
+        att_state = {k: v.detach().cpu()
+                     for k, v in self.attacker.model.policy.state_dict().items()}
+        def_state = {k: v.detach().cpu()
+                     for k, v in self.defender.model.policy.state_dict().items()}
+
+        def _do_save():
+            try:
+                d = f"{self.save_dir}/checkpoints"
+                torch.save(att_state, f"{d}/attacker_iter_{iteration}_policy.pt")
+                torch.save(def_state, f"{d}/defender_iter_{iteration}_policy.pt")
+                logger.info("Async checkpoint saved for iteration %d", iteration)
+            except Exception as e:
+                logger.warning("Async checkpoint failed for iteration %d: %s",
+                               iteration, e)
+
+        threading.Thread(target=_do_save, daemon=True).start()
+
+    # ── History / final save ───────────────────────────────────────────────────
+
+    def _update_history(self, iteration: int, metrics: Dict) -> None:
+        mm = metrics["main_match"]
+        self.history["iterations"].append(iteration)
+        self.history["curriculum_levels"].append(self._curr_level)
+        self.history["att_win_rates"].append(mm["att_win_rate"])
+        self.history["def_win_rates"].append(mm["def_win_rate"])
+        self.history["att_elo"].append(
+            metrics["elo"].get(f"attacker_iter_{iteration}", 1500))
+        self.history["def_elo"].append(
+            metrics["elo"].get(f"defender_iter_{iteration}", 1500))
+        self.history["timestamps"].append(datetime.utcnow().isoformat())
+        with open(f"{self.save_dir}/training_history.json", "w") as f:
+            json.dump(self.history, f, indent=2)
+
+    def _save_final(self) -> None:
+        # *_best.zip is managed by composite-score gating during training —
+        # final weights are saved separately so a late regression can't
+        # overwrite the best snapshot.
+        self.attacker.save(f"{self.save_dir}/attacker_final.zip")
+        self.defender.save(f"{self.save_dir}/defender_final.zip")
+        self.evaluator.plot_training_curves()
+        print_final_summary(
+            history     = self.history,
+            run_start   = self._run_start,
+            leaderboard = self.evaluator.elo.leaderboard(),
+        )
+        if self._best_score["attacker"] >= 0 or self._best_score["defender"] >= 0:
+            print(f"  Best models : {self.save_dir}/attacker_best.zip "
+                  f"(composite {self._best_score['attacker']:.2f})")
+            print(f"              : {self.save_dir}/defender_best.zip "
+                  f"(composite {self._best_score['defender']:.2f})")
+        else:
+            print("  Best models : not gated yet (best-model selection needs "
+                  "level 1+ baseline evals)")
+        print(f"  Final models: {self.save_dir}/attacker_final.zip / defender_final.zip")
+        print(f"  Results     : {self.save_dir}/results/")
+        print(f"  TensorBoard : tensorboard --logdir ./logs\n")

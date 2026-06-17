@@ -1,27 +1,87 @@
 {
+  "seed": 42,
+
   "model_paths": {
-    "attacker_best": "./models/production/attacker_iter_20.zip",
-    "defender_best": "./models/production/defender_iter_20.zip",
-    "attacker_pretrained": "./models/pretrained/attacker_pretrained.zip",
-    "production_dir": "./models/production",
-    "pretrained_dir": "./models/pretrained"
+    "attacker_best": "./models/cyberx_marl/attacker_best.zip",
+    "defender_best": "./models/cyberx_marl/defender_best.zip",
+    "checkpoints_dir": "./models/cyberx_marl/checkpoints",
+    "ghosts_dir": "./models/cyberx_marl/ghosts",
+    "oracle_datasets_dir": "./data/oracle_datasets"
   },
+
+  "ppo": {
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "n_steps": 256,
+    "batch_size": 512,
+    "n_epochs": 4,
+    "clip_range": 0.2,
+    "max_grad_norm": 0.5,
+    "lstm_hidden_size": 256,
+    "features_dim": 256,
+    "ent_coef": { "attacker": 0.10, "defender": 0.05 },
+    "extractor_hidden": { "attacker": 256, "defender": 512 },
+    "warmup_ent_coef": 0.15,
+    "warmup_iters": 12
+  },
+
   "training": {
-    "default_iterations": 10,
-    "default_timesteps": 50000,
-    "eval_episodes": 20,
-    "checkpoint_frequency": 2
+    "n_iterations": 30,
+    "timesteps_per_iter": 100000,
+    "eval_episodes": 50,
+    "n_envs": 8,
+    "device": "auto",
+    "run_bc_phase": true,
+    "run_llm_oracle_phase": false
   },
+
+  "curriculum": {
+    "promo_threshold": 0.60,
+    "promo_streak": 2,
+    "max_stage_iterations": 8,
+    "levels": {
+      "0": { "timestep_fraction": 0.3333, "min_timesteps": 30000, "eval_episodes": 10 },
+      "1": { "timestep_fraction": 0.5,    "min_timesteps": 60000, "eval_episodes": 20 },
+      "2": { "timestep_fraction": 1.0,    "min_timesteps": 0,     "eval_episodes": 0 }
+    },
+    "_comment_eval_episodes": "0 means use training.eval_episodes (full count)"
+  },
+
+  "league": {
+    "ghost_pool_max": 15,
+    "scripted_slots": 3,
+    "latest_slots": 2,
+    "_comment": "Per-iteration worker mix at level 2: scripted_slots workers vs scripted/expert, latest_slots vs current opponent, remainder vs ghosts sampled uniformly over full history. scripted_slots raised to 3 so neither side can overfit to a collapsed opponent — both keep facing agents that play the real game."
+  },
+
   "llm": {
-    "enabled": true,
+    "enabled": false,
+    "_comment_enabled": "Set to true once you have an API key configured",
+
     "provider": "ollama",
-    "model": "llama3.2:3b",
+    "_comment_provider": "Options: gemini | ollama | anthropic | openai",
+
+    "model": "codellama:13b",
+    "_comment_model_gemini": "Free tier. Set GEMINI_API_KEY env var.",
+    "_comment_model_ollama": "For CodeLlama via Ollama: set provider=ollama, model=codellama",
+    "_comment_model_ollama2": "Make sure ollama is running: ollama serve && ollama pull codellama",
+
     "api_base": "http://localhost:11434",
-    "consult_probability": 0.2,
-    "temperature": 0.7
+    "_comment_api_base": "Only used for ollama provider",
+
+    "api_key": "",
+    "_comment_api_key": "Gemini: set GEMINI_API_KEY env var. Anthropic: ANTHROPIC_API_KEY. Or paste key here.",
+
+    "consult_probability": 0.25,
+    "_comment_consult_prob": "Fraction of steps where LLM is queried (cost/rate control)",
+    "temperature": 0.3,
+    "cache_size": 4096
   },
+
   "logging": {
     "tensorboard_dir": "./logs",
-    "save_replays": true
+    "results_dir": "./models/cyberx_marl/results",
+    "save_plots_every_n_iters": 5
   }
 }
