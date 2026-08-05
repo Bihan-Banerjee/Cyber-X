@@ -1,0 +1,101 @@
+name: CI
+
+# The repo had no CI: tests_rl.py, eslint and tsc were all manual, so a broken
+# import or a regressed env invariant could sit on a branch indefinitely.
+# Everything here runs on CPU in minutes — the GPU training runs stay local.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: Lint + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      # tsc is clean today, so it is a hard gate.
+      - name: Typecheck (frontend + server)
+        run: npx tsc -b
+
+      # eslint reports ~350 pre-existing errors across the scanners (mostly
+      # no-explicit-any). Gating on the whole tree would make CI red on arrival
+      # and therefore ignored, so the hard gate covers the RL/dashboard surface
+      # this work owns; the full run is advisory until the backlog is cleared.
+      - name: Lint (RL + dashboard surface)
+        run: >
+          npx eslint
+          src/lib/rlData.ts
+          src/data/defenderActionMap.ts
+          src/pages/RLArena.tsx
+          src/pages/CommandCenter.tsx
+          src/components/DefenderCopilot.tsx
+          src/server/index.ts
+
+      - name: Lint (full tree, advisory)
+        continue-on-error: true
+        run: npm run lint
+
+  rl:
+    name: RL self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # CPU wheels only. The CUDA build is ~2.5 GB and buys nothing here: the
+      # tests that touch CUDA already skip when it is unavailable.
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r src/server/rl/requirements.txt
+
+      # 19 self-tests: SB3 env-checker, seeded determinism, the win-condition
+      # and stealth/containment invariants, the camping and reward-farm guards
+      # (PROJECT_CONTEXT.md §9), the SocState observation loop, and PFSP
+      # sampling. Exits non-zero on any failure.
+      - name: Run tests_rl.py
+        working-directory: src/server/rl
+        run: python tests_rl.py
+
+      # Smoke the shadow harness end to end. --synthetic needs no Elasticsearch,
+      # and this catches import/CLI breakage in the artifact pipeline.
+      - name: Shadow-eval smoke
+        working-directory: src/server/rl
+        run: |
+          python -c "
+          import shadow_eval
+          events = shadow_eval._synthetic_events(200)
+          assert len(events) == 200
+          s = shadow_eval.TelemetryAdapter.summarize(events[:20]) if hasattr(shadow_eval, 'TelemetryAdapter') else None
+          print('synthetic generator OK')
+          "
+          python -c "
+          from telemetry_adapter import TelemetryAdapter
+          from soc_state import SocState
+          import shadow_eval
+          adapter, soc = TelemetryAdapter(), SocState()
+          events = shadow_eval._synthetic_events(200)
+          summary = adapter.summarize(events[:20])
+          obs = adapter.build_observation(defense_state=soc.as_defense_state(), summary=summary)
+          assert obs.shape == (12,), obs.shape
+          out = soc.advance(1, summary)
+          assert 'effect' in out, out
+          print('telemetry bridge OK:', out)
+          "
+
+      - name: Config validates
+        working-directory: src/server/rl
+        run: python -c "from config_loader import get_config; c = get_config(); print('config OK, pfsp =', c.league.pfsp_enabled)"

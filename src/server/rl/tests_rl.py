@@ -356,6 +356,120 @@ def soc_state_closes_the_observation_loop():
 
 
 @test
+def pfsp_prioritizes_losses_without_starving_the_pool():
+    """PFSP must concentrate on opponents that beat us AND keep full support.
+
+    Both halves matter. Weighting toward hard opponents is the point; but a
+    ghost that drops to zero probability can never be re-measured, and a league
+    that collapses onto one opponent recreates exactly the specialization
+    pressure it exists to prevent (PROJECT_CONTEXT.md §5, v3 league notes).
+    """
+    import random as _random
+    from config_loader import get_config
+    from trainer import MARLTrainer
+
+    ghosts = ["ghosts/def_1.zip", "ghosts/def_2.zip", "ghosts/def_3.zip"]
+    record = {
+        # We lose almost every game to #1, win almost every game against #3.
+        "rl:ghosts/def_1.zip": {"wins": 1, "losses": 19, "draws": 0},
+        "rl:ghosts/def_2.zip": {"wins": 10, "losses": 10, "draws": 0},
+        "rl:ghosts/def_3.zip": {"wins": 19, "losses": 1, "draws": 0},
+    }
+
+    trainer = MARLTrainer.__new__(MARLTrainer)          # no envs / no GPU
+    trainer.cfg = get_config()
+    trainer._opponent_record = {"attacker": record, "defender": {}}
+
+    weights = trainer._pfsp_weights("attacker", ghosts)
+    assert weights[0] > weights[1] > weights[2], (
+        f"weights not ordered by loss rate: {weights}")
+    assert all(w > 0.0 for w in weights), f"a ghost was starved: {weights}"
+
+    # An opponent below min_games must keep the neutral weight rather than let
+    # one lucky episode capture the distribution.
+    sparse = dict(record)
+    sparse["rl:ghosts/def_1.zip"] = {"wins": 0, "losses": 1, "draws": 0}
+    trainer._opponent_record["attacker"] = sparse
+    neutral = trainer._pfsp_weights("attacker", ghosts)
+    assert neutral[0] == 0.5 ** trainer.cfg.league.pfsp_p, (
+        f"sparse opponent did not fall back to neutral: {neutral[0]}")
+
+    # Sampling honours the weights on average and always returns k distinct
+    # ghosts (the mix relies on distinctness to fill its slots).
+    trainer._opponent_record["attacker"] = record
+    weights = trainer._pfsp_weights("attacker", ghosts)
+    rng = _random.Random(0)
+    counts = {g: 0 for g in ghosts}
+    for _ in range(2000):
+        picked = MARLTrainer._weighted_sample_without_replacement(
+            ghosts, weights, 1, rng)
+        assert len(picked) == 1
+        counts[picked[0]] += 1
+    assert counts[ghosts[0]] > counts[ghosts[2]], (
+        f"hard opponent not sampled more often: {counts}")
+    assert all(c > 0 for c in counts.values()), f"pool starved in sampling: {counts}"
+
+    two = MARLTrainer._weighted_sample_without_replacement(
+        ghosts, weights, 2, _random.Random(1))
+    assert len(two) == 2 and len(set(two)) == 2, f"duplicate ghosts drawn: {two}"
+
+    # Uniform sampling must still be reachable — it is the control arm.
+    assert trainer.cfg.league.pfsp_enabled is False, (
+        "config.json ships with PFSP on; the before/after baseline needs it off")
+
+
+@test
+def attack_grounding_matches_env_and_frontend():
+    """The grounding table is cited in the paper and rendered in the Copilot.
+    Those two must not drift from each other or from the env's action order."""
+    import os
+    import re
+    from attack_grounding import ATTACKER_GROUNDING, DEFENDER_GROUNDING
+    from shared_honeypot_env import ATT_ACTION_NAMES, DEF_ACTION_NAMES
+
+    # 1. Order and names must match the env exactly — the tables are indexed by
+    #    raw policy action id, so an off-by-one mislabels every recommendation.
+    assert [g.action for g in ATTACKER_GROUNDING] == ATT_ACTION_NAMES, (
+        "attacker grounding is out of sync with ATT_ACTION_NAMES")
+    assert [g.action for g in DEFENDER_GROUNDING] == DEF_ACTION_NAMES[:12], (
+        "defender grounding is out of sync with DEF_ACTION_NAMES")
+
+    # 2. IDs must look like real ATT&CK / D3FEND identifiers, or be explicitly
+    #    unmapped. An approximate ID in a paper table is worse than a blank.
+    for g in ATTACKER_GROUNDING:
+        assert g.technique is None or re.fullmatch(r"T\d{4}(\.\d{3})?", g.technique), \
+            f"{g.action}: {g.technique!r} is not an ATT&CK technique id"
+        assert (g.technique is None) == (g.name is None), \
+            f"{g.action}: id and name must both be set or both be None"
+    for g in DEFENDER_GROUNDING:
+        assert g.technique is None or re.fullmatch(r"D3-[A-Z]{2,5}", g.technique), \
+            f"{g.action}: {g.technique!r} is not a D3FEND technique id"
+        assert (g.technique is None) == (g.name is None), \
+            f"{g.action}: id and name must both be set or both be None"
+
+    # 3. The frontend map must agree. Parsed rather than imported — there is no
+    #    Node in this test run, and a regex over the literal is enough to catch
+    #    the drift this guard exists for.
+    ts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "..", "..", "data", "defenderActionMap.ts")
+    with open(os.path.abspath(ts_path), encoding="utf-8") as f:
+        ts = f.read()
+    entries = re.findall(
+        r'action:\s*"([a-z_]+)",.*?d3fendId:\s*(null|"[^"]*"),\s*\n\s*'
+        r'd3fend:\s*(null|"[^"]*"),',
+        ts, re.S)
+    assert len(entries) == 12, f"parsed {len(entries)} frontend entries, expected 12"
+
+    for (ts_action, ts_id, ts_name), g in zip(entries, DEFENDER_GROUNDING):
+        unquote = lambda v: None if v == "null" else v.strip('"')  # noqa: E731
+        assert ts_action == g.action, f"order differs: {ts_action} vs {g.action}"
+        assert unquote(ts_id) == g.technique, (
+            f"{g.action}: frontend d3fendId {ts_id} != {g.technique}")
+        assert unquote(ts_name) == g.name, (
+            f"{g.action}: frontend d3fend {ts_name} != {g.name}")
+
+
+@test
 def config_loads_and_validates():
     from config_loader import ConfigError, RLConfig, get_config
     cfg = get_config()

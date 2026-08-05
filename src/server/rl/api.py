@@ -43,7 +43,10 @@ import json
 import logging
 import os
 import queue
+import signal
 import statistics
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -62,7 +65,7 @@ CORS(app)
 logger = logging.getLogger(__name__)
 
 # ── Global state ───────────────────────────────────────────────────────────────
-_trainer         = None
+_training_proc: Optional[subprocess.Popen] = None
 _training_thread: Optional[threading.Thread] = None
 _is_training     = False
 _stop_flag       = threading.Event()
@@ -109,10 +112,15 @@ logging.getLogger().addHandler(QueueLogHandler())
 @app.route("/api/rl/status", methods=["GET"])
 def get_status():
     history = _load_history()
+    levels  = history.get("curriculum_levels") or [0]
     return jsonify({
         "is_training":      _is_training,
-        "has_models":       _trainer is not None,
-        "curriculum_level": _trainer._curr_level if _trainer else 0,
+        # Training runs out of process now, so report what is on disk rather
+        # than what happens to be loaded in this Flask worker.
+        "has_models":       any(m["exists"] for m in (
+                                {"exists": bool(_model_path(r))} for r in
+                                ("attacker", "defender"))),
+        "curriculum_level": levels[-1],
         "iterations_done":  len(history.get("iterations", [])),
         "latest_metrics":   _latest_metrics(),
         "demo_running":     _demo_running,
@@ -121,7 +129,7 @@ def get_status():
 
 @app.route("/api/rl/train/start", methods=["POST"])
 def start_training():
-    global _trainer, _training_thread, _is_training, _stop_flag
+    global _training_thread, _is_training, _stop_flag
 
     if _is_training:
         return jsonify({"error": "Training already in progress"}), 409
@@ -135,30 +143,63 @@ def start_training():
     save_dir           = data.get("save_dir", "./models/cyberx_marl")
     seed               = data.get("seed")
 
-    llm_cfg = _config.get_llm_config()
     _stop_flag.clear()
 
+    # Run training as a `run_training.py` subprocess rather than in a thread in
+    # this process. The in-process path skipped the crash-restart supervisor AND
+    # its `taskkill /T` worker-tree cleanup, so a cuDNN/driver fault — which is
+    # exactly what the supervisor exists for on a laptop GPU — orphaned the
+    # n_envs×2 worker processes and leaked ~0.5 GB each until the box OOM'd.
+    cmd = [
+        sys.executable, os.path.join(_SCRIPT_DIR, "run_training.py"),
+        "--iterations", str(n_iterations),
+        "--timesteps", str(timesteps_per_iter),
+        "--eval-episodes", str(eval_episodes),
+        "--save-dir", save_dir,
+    ]
+    if seed is not None:
+        cmd += ["--seed", str(seed)]
+    if not run_bc:
+        cmd += ["--no-bc"]
+    if run_llm:
+        cmd += ["--llm-oracle"]
+    if data.get("pfsp") is True:
+        cmd += ["--pfsp"]
+    elif data.get("pfsp") is False:
+        cmd += ["--no-pfsp"]
+    for ablation in data.get("ablate", []) or []:
+        cmd += ["--ablate", str(ablation)]
+
     def _train():
-        global _trainer, _is_training
+        global _training_proc, _is_training
         _is_training = True
         try:
-            from trainer import MARLTrainer
-            _trainer = MARLTrainer(
-                save_dir   = save_dir,
-                llm_config = llm_cfg,
-                seed       = seed,
-            )
-            _trainer.train(
-                n_iterations         = n_iterations,
-                timesteps_per_iter   = timesteps_per_iter,
-                eval_episodes        = eval_episodes,
-                run_bc_phase         = run_bc,
-                run_llm_oracle_phase = run_llm,
-            )
-        except Exception as exc:
+            proc = subprocess.Popen(
+                cmd, cwd=_SCRIPT_DIR, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                errors="replace", bufsize=1,
+                # Its own process group, so /train/stop can deliver
+                # CTRL_BREAK_EVENT to the child without also interrupting Flask.
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP
+                               if os.name == "nt" else 0))
+            _training_proc = proc
+            for line in proc.stdout:                    # feed /logs/stream
+                line = line.rstrip()
+                if not line:
+                    continue
+                try:
+                    _log_queue.put_nowait({
+                        "time": datetime.utcnow().isoformat(),
+                        "level": "INFO", "msg": line})
+                except queue.Full:
+                    pass
+            proc.wait()
+            logger.info("Training subprocess exited with %s", proc.returncode)
+        except Exception as exc:  # noqa: BLE001
             logger.error("Training failed: %s", exc, exc_info=True)
         finally:
             _is_training = False
+            _training_proc = None
 
     _training_thread = threading.Thread(target=_train, daemon=True)
     _training_thread.start()
@@ -167,16 +208,35 @@ def start_training():
         "message":    "Training started",
         "iterations": n_iterations,
         "timesteps":  timesteps_per_iter,
+        "save_dir":   save_dir,
+        "command":    " ".join(cmd),
     })
 
 
 @app.route("/api/rl/train/stop", methods=["POST"])
 def stop_training():
-    global _is_training
+    """Ask the training subprocess to pause cleanly.
+
+    run_training.py saves full state after every iteration and treats SIGINT as
+    'finish this iteration, then save', so CTRL_BREAK is a graceful stop, not a
+    kill — the run resumes with `--resume`.
+    """
     _stop_flag.set()
-    if _trainer is not None:
-        _trainer._pause_requested = True   # finish current iteration, then save
-    return jsonify({"message": "Stop signal sent. Training will finish current iteration."})
+    proc = _training_proc
+    if proc is None or proc.poll() is not None:
+        return jsonify({"message": "No training run is active."}), 409
+    try:
+        if os.name == "nt":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            proc.send_signal(signal.SIGINT)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not signal the training process: %s", exc)
+        return jsonify({"error": f"could not signal training: {exc}"}), 500
+    return jsonify({
+        "message": "Stop signal sent. Training will finish the current "
+                   "iteration and save; resume with --resume.",
+    })
 
 
 @app.route("/api/rl/metrics", methods=["GET"])
@@ -295,9 +355,36 @@ def get_leaderboard():
 
 @app.route("/api/rl/paper/table", methods=["GET"])
 def get_paper_table():
-    if _trainer is None:
+    """Latest iteration as a markdown table. Built from the metrics on disk —
+    it used to require a trainer instance in this process, which meant it 404'd
+    for every archived run, i.e. every run you would actually write up."""
+    m = _latest_metrics()
+    if not m:
         return jsonify({"table": "No training data available yet."}), 404
-    return jsonify({"table": _trainer.evaluator.latest_summary_table()})
+
+    mm    = m.get("main_match", {}) or {}
+    lines = [
+        f"### CyberX MARL — iteration {m.get('iteration', '?')} "
+        f"(curriculum level {m.get('curriculum_level', '?')})",
+        "",
+        "| Match | Attacker win | Defender win | Draws | Mean ep. length |",
+        "|---|---|---|---|---|",
+        f"| self-play | {mm.get('att_win_rate')} | {mm.get('def_win_rate')} | "
+        f"{mm.get('draws')} | {mm.get('mean_ep_length')} |",
+    ]
+    for side, label in (("att", "RL attacker"), ("def", "RL defender")):
+        key = "att_win_rate" if side == "att" else "def_win_rate"
+        for baseline, res in sorted((m.get(f"{side}_vs_baselines", {}) or {}).items()):
+            res = res or {}
+            lines.append(
+                f"| {label} vs {baseline} | {res.get('att_win_rate')} | "
+                f"{res.get('def_win_rate')} | {res.get('draws')} | "
+                f"{res.get('mean_ep_length')} |")
+
+    ent = m.get("strategy_entropy", {}) or {}
+    lines += ["", f"Strategy entropy — attacker {ent.get('attacker')}, "
+                  f"defender {ent.get('defender')} (max 3.81 bits)."]
+    return jsonify({"table": "\n".join(lines), "run_dir": _resolve_run_dir()})
 
 
 @app.route("/api/rl/logs/stream", methods=["GET"])

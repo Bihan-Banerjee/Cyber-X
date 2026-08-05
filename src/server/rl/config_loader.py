@@ -169,14 +169,30 @@ class LeagueConfig:
     ghost_pool_max: int
     scripted_slots: int
     latest_slots:   int
+    # PFSP (Prioritized Fictitious Self-Play, AlphaStar): sample ghosts in
+    # proportion to how badly we lose to them instead of uniformly.
+    pfsp_enabled:   bool
+    pfsp_p:         float   # exponent of f_hard(x) = x^p; higher = greedier
+    pfsp_min_games: int     # below this, an opponent keeps the uniform weight
 
     @classmethod
     def parse(cls, d: Dict[str, Any]) -> "LeagueConfig":
         s = "league"
+        pfsp = _strip_comments(d.get("pfsp", {}) or {})
+        p = float(pfsp.get("p", 2.0))
+        if p <= 0:
+            raise ConfigError(f"config.json [{s}].pfsp.p: must be > 0 (got {p})")
+        min_games = int(pfsp.get("min_games", 5))
+        if min_games < 1:
+            raise ConfigError(
+                f"config.json [{s}].pfsp.min_games: must be >= 1 (got {min_games})")
         return cls(
             ghost_pool_max = int(_require(d, "ghost_pool_max", s)),
             scripted_slots = int(_require(d, "scripted_slots", s)),
             latest_slots   = int(_require(d, "latest_slots", s)),
+            pfsp_enabled   = bool(pfsp.get("enabled", False)),
+            pfsp_p         = p,
+            pfsp_min_games = min_games,
         )
 
 

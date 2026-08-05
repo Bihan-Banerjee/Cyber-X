@@ -65,6 +65,7 @@ from progress import (
 )
 from shared_honeypot_env import SharedHoneypotEnv
 from vec_env_factory import make_vec_env
+from wandb_logger import WandbLogger
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,6 +84,11 @@ BANNER = """
 
 # (kind, value) per worker: ("scripted", registry_name) or ("rl", zip_path)
 OpponentMix = List[Tuple[str, str]]
+
+# No PFSP weight ever reaches zero: a ghost that is never sampled cannot be
+# re-measured, and starving the pool down to one opponent is precisely the
+# specialization pressure the league exists to prevent.
+_PFSP_FLOOR = 0.02
 
 
 class MARLTrainer:
@@ -121,6 +127,9 @@ class MARLTrainer:
         self._att_ghost_paths: List[str] = []
         self._def_ghost_paths: List[str] = []
         self._best_score = {"attacker": -1.0, "defender": -1.0}
+        # {role: {opponent_id: {wins, losses, draws}}} — drives PFSP sampling.
+        self._opponent_record: Dict[str, Dict[str, Dict[str, int]]] = {
+            "attacker": {}, "defender": {}}
 
         # ── Persistent worker pools: created ONCE, opponents hot-swapped ──
         t0 = time.time()
@@ -153,6 +162,24 @@ class MARLTrainer:
         self.att_oracle = LLMOracle("attacker", self.llm_config)
         self.def_oracle = LLMOracle("defender", self.llm_config)
 
+        # Optional experiment tracking — a no-op unless enabled in config.json
+        # and the package is installed, so a sweep never dies on a missing dep.
+        self.wandb = WandbLogger(
+            self.cfg.logging,
+            run_config = {
+                "seed": self.seed, "n_envs": self.n_envs, "device": self.device,
+                "pfsp": self.cfg.league.pfsp_enabled,
+                "pfsp_p": self.cfg.league.pfsp_p,
+                "scripted_slots": self.cfg.league.scripted_slots,
+                "latest_slots": self.cfg.league.latest_slots,
+                "ghost_pool_max": self.cfg.league.ghost_pool_max,
+                "ent_coef": self.cfg.ppo.ent_coef,
+                "warmup_iters": self.cfg.ppo.warmup_iters,
+                "save_dir": save_dir,
+            },
+            run_name = os.path.basename(os.path.normpath(save_dir)),
+        )
+
         self.history: Dict = {
             "iterations": [], "curriculum_levels": [],
             "att_win_rates": [], "def_win_rates": [],
@@ -182,6 +209,9 @@ class MARLTrainer:
                     pool.close()
             except Exception:
                 pass
+        wandb = getattr(self, "wandb", None)
+        if wandb is not None:
+            wandb.finish()
 
     # ── Device resolution ──────────────────────────────────────────────────────
 
@@ -236,6 +266,72 @@ class MARLTrainer:
         other = "defender" if role == "attacker" else "attacker"
         return f"{self.save_dir}/{other}_latest.zip"
 
+    # ── PFSP: prioritized opponent sampling ────────────────────────────────────
+
+    def _record_opponent_results(self, role: str, vec_env) -> None:
+        """Drain each worker's per-opponent win/loss tally into the running
+        record for `role`. Free: these are episodes training already played."""
+        try:
+            per_worker = vec_env.env_method("drain_opponent_record")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not drain opponent records for %s: %s", role, e)
+            return
+        record = self._opponent_record[role]
+        for worker in per_worker:
+            for opp_id, tally in (worker or {}).items():
+                agg = record.setdefault(opp_id, {"wins": 0, "losses": 0, "draws": 0})
+                for k in ("wins", "losses", "draws"):
+                    agg[k] += tally.get(k, 0)
+
+    def _pfsp_weights(self, role: str, ghosts: List[str]) -> List[float]:
+        """PFSP weights over `ghosts` for `role`: f_hard(1 - win_rate) = x^p.
+
+        Losing to an opponent raises its weight, so training concentrates on the
+        opponents that actually beat us — the mechanism AlphaStar used, and the
+        one the exploitability result points at (the defender under-responds to
+        the attacker: gap 0.25 vs the attacker's 0.11).
+
+        Two guards matter. Opponents with fewer than `pfsp_min_games` recorded
+        keep the neutral weight, so one unlucky episode cannot capture the
+        distribution. And every weight is floored above zero: starving a ghost
+        entirely would recreate the single-opponent specialization pressure the
+        league exists to prevent.
+        """
+        cfg    = self.cfg.league
+        record = self._opponent_record[role]
+        weights = []
+        for path in ghosts:
+            tally = record.get(f"rl:{os.path.abspath(path)}") or record.get(f"rl:{path}")
+            games = sum(tally.values()) if tally else 0
+            if not tally or games < cfg.pfsp_min_games:
+                weights.append(0.5 ** cfg.pfsp_p)   # neutral: as if win_rate 0.5
+                continue
+            win_rate = tally["wins"] / games
+            weights.append(max((1.0 - win_rate) ** cfg.pfsp_p, _PFSP_FLOOR))
+        return weights
+
+    @staticmethod
+    def _weighted_sample_without_replacement(
+        items: List[str], weights: List[float], k: int, rng: random.Random,
+    ) -> List[str]:
+        """Draw k distinct items with probability proportional to weight."""
+        pool = list(zip(items, weights))
+        picked: List[str] = []
+        for _ in range(min(k, len(pool))):
+            total = sum(w for _, w in pool)
+            if total <= 0:
+                picked.extend(item for item, _ in pool[:k - len(picked)])
+                break
+            threshold = rng.random() * total
+            acc = 0.0
+            for idx, (item, w) in enumerate(pool):
+                acc += w
+                if acc >= threshold:
+                    picked.append(item)
+                    pool.pop(idx)
+                    break
+        return picked
+
     def _roll_opponent_mix(self, role: str) -> OpponentMix:
         """
         Per-worker opponent assignment for this iteration.
@@ -245,7 +341,8 @@ class MARLTrainer:
         opponent styles (the core anti-specialization mechanism).
 
         Level 2: league mix — scripted exploiter slots + latest opponent
-        + ghosts sampled uniformly over the full history.
+        + ghosts sampled over the full history, uniformly or (when
+        `league.pfsp.enabled`) weighted toward the ghosts that beat us.
         """
         pool = SCRIPTED_POOL_BY_LEVEL[role][self._curr_level]
         if self._curr_level < 2:
@@ -271,7 +368,15 @@ class MARLTrainer:
         mix: OpponentMix = [("scripted", random.choice(pool))
                             for _ in range(n_scripted)]
         mix += [("rl", latest)] * n_latest
-        mix += [("rl", g) for g in random.sample(ghosts, n_ghost)]
+
+        if self.cfg.league.pfsp_enabled and n_ghost:
+            weights = self._pfsp_weights(role, ghosts)
+            chosen = self._weighted_sample_without_replacement(
+                ghosts, weights, n_ghost, random)
+        else:
+            chosen = random.sample(ghosts, n_ghost)
+        mix += [("rl", g) for g in chosen]
+
         while len(mix) < n:
             mix.append(("scripted", random.choice(pool)))
         return mix
@@ -282,6 +387,20 @@ class MARLTrainer:
                 vec_env.env_method("set_scripted_opponent", value, indices=[i])
             else:
                 vec_env.env_method("load_rl_opponent", value, indices=[i])
+
+    def _describe_pfsp(self, role: str) -> str:
+        """Toughest opponents by observed loss rate — the ones PFSP up-weights."""
+        record = self._opponent_record[role]
+        rows = []
+        for opp_id, t in record.items():
+            games = sum(t.values())
+            if games:
+                rows.append((t["losses"] / games, os.path.basename(opp_id), games))
+        if not rows:
+            return "no episodes recorded yet"
+        rows.sort(reverse=True)
+        return ", ".join(f"{name} lose={rate:.0%} (n={n})"
+                         for rate, name, n in rows[:3])
 
     @staticmethod
     def _describe_mix(mix: OpponentMix) -> str:
@@ -322,6 +441,9 @@ class MARLTrainer:
             "att_ghost_paths":    self._att_ghost_paths,
             "def_ghost_paths":    self._def_ghost_paths,
             "best_score":         self._best_score,
+            "opponent_record":    self._opponent_record,
+            "pfsp_enabled":       self.cfg.league.pfsp_enabled,
+            "ablations":          getattr(self, "ablations", []),
             "attacker_path":      att_path,
             "defender_path":      def_path,
             "history":            self.history,
@@ -356,6 +478,11 @@ class MARLTrainer:
         self._def_ghost_paths     = [p for p in s.get("def_ghost_paths", [])
                                      if os.path.exists(p)]
         self._best_score          = s.get("best_score", self._best_score)
+        # Resuming without the record would reset PFSP to uniform for the rest
+        # of the run, quietly changing the configuration mid-experiment.
+        restored = s.get("opponent_record") or {}
+        for role in ("attacker", "defender"):
+            self._opponent_record[role] = restored.get(role, {})
         self.history              = s["history"]
         self.evaluator.elo.from_dict(s.get("elo", {}))
 
@@ -501,6 +628,14 @@ class MARLTrainer:
                 tb_log_name         = role,
                 callback            = cb,
             )
+            # Harvest this phase's per-opponent outcomes while they are still in
+            # the workers; PFSP uses them to weight the next iteration's draw.
+            self._record_opponent_results(
+                role, self._att_envs if role == "attacker" else self._def_envs)
+
+        if self.cfg.league.pfsp_enabled and self._curr_level == 2:
+            for role in ("attacker", "defender"):
+                print(f"  PFSP {role}: {self._describe_pfsp(role)}")
 
         # Checkpoint — runs in a background thread so disk I/O never
         # blocks the loop. Level 0-1: every 5 iterations.
@@ -542,6 +677,8 @@ class MARLTrainer:
         self._iter_times.append(iter_elapsed)
 
         self._update_history(iteration, metrics)
+        self.wandb.log_iteration(iteration, metrics, self._curr_level,
+                                 self._opponent_record)
         self._update_best_models(metrics)
         self._check_curriculum_promotion(metrics)
         self._stage_iter_count += 1

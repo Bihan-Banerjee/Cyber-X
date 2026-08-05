@@ -102,6 +102,14 @@ def main():
     parser.add_argument("--n-envs",        type=int,   default=None,
         help="Parallel env workers (default: config.json training.n_envs)")
     parser.add_argument("--no-bc",         action="store_true")
+    parser.add_argument("--pfsp", dest="pfsp", action="store_true", default=None,
+        help="Force PFSP league sampling on (overrides config.json)")
+    parser.add_argument("--no-pfsp", dest="pfsp", action="store_false",
+        help="Force uniform league sampling — the PFSP control arm")
+    parser.add_argument("--ablate", action="append", default=[],
+        choices=["bc", "curriculum", "league", "entropy_warmup"],
+        help="Disable a component to measure its contribution. Repeatable; the "
+             "value is recorded in trainer_state.json so runs stay identifiable.")
     parser.add_argument("--llm-oracle",    action="store_true")
     parser.add_argument("--llm-provider",
         choices=["gemini", "ollama", "anthropic", "openai"], default=None)
@@ -163,6 +171,22 @@ def main():
             llm_config["enabled"] = False
             run_llm = False
 
+    # Ablations and the PFSP switch are applied to the loaded config so every
+    # downstream consumer (trainer, saved state, W&B) sees one coherent view.
+    if args.pfsp is not None:
+        object.__setattr__(cfg.league, "pfsp_enabled", args.pfsp)
+    ablations = set(args.ablate)
+    if "bc" in ablations:
+        run_bc = False
+    if "league" in ablations:
+        # Uniform ghosts only, no scripted exploiter slots and no latest-weights
+        # slot: the league reduces to plain self-play against past snapshots.
+        object.__setattr__(cfg.league, "pfsp_enabled", False)
+        object.__setattr__(cfg.league, "scripted_slots", 0)
+        object.__setattr__(cfg.league, "latest_slots", 0)
+    if "entropy_warmup" in ablations:
+        object.__setattr__(cfg.ppo, "warmup_iters", 0)
+
     seed         = args.seed if args.seed is not None else cfg.seed
     n_envs       = args.n_envs if args.n_envs is not None else cfg.training.n_envs
     device       = args.device or cfg.training.device
@@ -182,6 +206,8 @@ def main():
 ║  LLM provider:      {display_provider:<36} ║
 ║  Device:            {device:<36} ║
 ║  Seed:              {seed:<36} ║
+║  League sampling:   {('PFSP' if cfg.league.pfsp_enabled else 'uniform'):<36} ║
+║  Ablations:         {(', '.join(sorted(ablations)) or 'none'):<36} ║
 ║  Resume:            {str(args.resume):<36} ║
 ║  Parallel envs:     {str(use_parallel) + f' (n={n_envs})':<36} ║
 ║  Save dir:          {args.save_dir:<36} ║
@@ -200,6 +226,14 @@ def main():
         seed           = seed,
         config         = cfg,
     )
+    # Recorded in trainer_state.json so an archived run says what it was.
+    trainer.ablations = sorted(ablations)
+    if "curriculum" in ablations:
+        # Skip straight to the full game: no gradual action unlock, no
+        # promotion gate. This is the arm that measures what curriculum buys.
+        trainer._curr_level = 2
+        trainer._att_envs.env_method("set_curriculum_level", 2)
+        trainer._def_envs.env_method("set_curriculum_level", 2)
 
     # Always close the env pools — on success, crash, or Ctrl+C — so the
     # n_envs×2 worker subprocesses never orphan and leak memory.

@@ -68,14 +68,15 @@ app.use('/api/rl', async (req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
-      (res as any).flushHeaders?.();
+      res.flushHeaders?.();
     }
 
     upstream.data.pipe(res);
     req.on('close', () => upstream.data.destroy());
-  } catch (error: any) {
-    res.status(error.response?.status || 500).json({
-      error: error.message
+  } catch (error: unknown) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    res.status(status || 500).json({
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 });
