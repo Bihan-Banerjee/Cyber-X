@@ -73,8 +73,9 @@ _demo_thread: Optional[threading.Thread] = None
 _demo_running    = False
 _demo_queue: queue.Queue = queue.Queue(maxsize=2000)
 
-_advisor         = None   # cached DefenderAdvisor (telemetry shadow mode)
+_advisor         = None   # cached DefenderAdvisor for /telemetry/suggest
 _advisor_path    = None
+_advisor_lock    = threading.Lock()   # its LSTM state is not concurrency-safe
 
 _SAVE_DIR        = "./models/cyberx_marl"
 _RESULTS_DIR     = os.path.join(_SAVE_DIR, "results")
@@ -552,34 +553,41 @@ def telemetry_suggest():
         es_url = data.get("es_url", "http://localhost:9200"),
         window = data.get("window", "now-5m"),
     )
+    summary = adapter.summarize(adapter.fetch_events())
     obs = adapter.build_observation(
         defense_state = data.get("defense_state"),
         step_fraction = float(data.get("step_fraction", 0.5)),
+        summary       = summary,
     )
 
-    if _advisor is None or _advisor_path != model_path:
-        _advisor = DefenderAdvisor(model_path)
-        _advisor_path = model_path
-    if data.get("reset"):
-        _advisor.reset()
+    # Loading the model costs ~10s, so the advisor is cached — but its LSTM
+    # state is then shared, and Flask serves these concurrently. Serialize
+    # access and let a caller ask for a clean history with {"reset": true}.
+    with _advisor_lock:
+        if _advisor is None or _advisor_path != model_path:
+            _advisor = DefenderAdvisor(model_path)
+            _advisor_path = model_path
+        if data.get("reset"):
+            _advisor.reset()
+        result = _advisor.suggest(obs)
 
-    result = _advisor.suggest(obs)
-    return jsonify({**result, "observation": obs.tolist()})
+    return jsonify({**result,
+                    "observation":    obs.tolist(),
+                    "events_summary": summary})
 
 
 @app.route("/api/rl/telemetry/stream", methods=["GET"])
 def telemetry_stream():
     """SSE: roll the trained defender over the live honeypot telemetry feed.
-    Each tick emits {events_summary, observation, action, action_name}. Powers
-    the Defender Copilot without the frontend polling. Inference only."""
-    global _advisor, _advisor_path
-
+    Each tick emits {events_summary, observation, action, action_name,
+    soc_state, outcome}. Powers the Defender Copilot without the frontend
+    polling. Inference only — nothing is executed against the honeypot."""
     es_url   = request.args.get("es_url", "http://localhost:9200")
     window   = request.args.get("window", "now-5m")
     interval = max(2.0, float(request.args.get("interval", 5.0)))
 
     def generate():
-        global _advisor, _advisor_path
+        from soc_state import SocState
         from telemetry_adapter import DefenderAdvisor, TelemetryAdapter
 
         model_path = _model_path("defender")
@@ -587,20 +595,35 @@ def telemetry_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': 'No trained defender found — run training first'})}\n\n"
             return
 
-        if _advisor is None or _advisor_path != model_path:
-            try:
-                _advisor = DefenderAdvisor(model_path)
-                _advisor_path = model_path
-            except Exception as exc:  # noqa: BLE001
-                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-                return
+        # Per-connection advisor and SOC state. These were module globals, so
+        # two open Copilots (the Command Center and the Honeypot Monitor each
+        # mount one) interleaved their writes into a single LSTM hidden state
+        # and corrupted each other's history.
+        try:
+            advisor = DefenderAdvisor(model_path)
+        except Exception as exc:  # noqa: BLE001
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
 
+        soc     = SocState()
         adapter = TelemetryAdapter(es_url=es_url, window=window)
         while True:
             try:
+                # One query per tick: build_observation would otherwise issue a
+                # second, so the summary shown to the user came from different
+                # events than the ones the model actually scored.
+                soc.decay()
                 summary = adapter.summarize(adapter.fetch_events())
-                obs     = adapter.build_observation(step_fraction=0.5)
-                result  = _advisor.suggest(obs)
+                obs     = adapter.build_observation(
+                    defense_state = soc.as_defense_state(),
+                    step_fraction = 0.5,
+                    summary       = summary,
+                )
+                result  = advisor.suggest(obs)
+                # Feed the recommendation back into the SOC posture, so evidence
+                # accumulates as the defender investigates and the next
+                # recommendation reflects it instead of freezing on one action.
+                outcome = soc.advance(result["action"], summary)
                 event   = {
                     "type":           "suggestion",
                     "time":           datetime.utcnow().isoformat(),
@@ -608,6 +631,8 @@ def telemetry_stream():
                     "observation":    obs.tolist(),
                     "action":         result["action"],
                     "action_name":    result["action_name"],
+                    "soc_state":      soc.as_defense_state(),
+                    "outcome":        outcome,
                 }
                 yield f"data: {json.dumps(event)}\n\n"
             except GeneratorExit:

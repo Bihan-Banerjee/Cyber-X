@@ -300,6 +300,62 @@ def defender_observation_layout_matches_adapter():
 
 
 @test
+def soc_state_closes_the_observation_loop():
+    """The shadow evaluation fed the policy a frozen defense_state, so 7 of 12
+    observation dims never moved and the defender emitted one action forever.
+    SocState exists to close that loop; guard the three properties that matter:
+    evidence accrues from investigation, containment fires once it clears the
+    threshold and consumes it, and the state decays back down."""
+    from soc_state import SocState
+    from shared_honeypot_env import (
+        DEFAULT_REWARDS, D_HARD_BLOCK, D_INVESTIGATE, D_ISOLATE, D_THREAT_HUNT,
+    )
+
+    busy = {"suspicious_commands": 6, "port_scan": 1, "priv_esc_attempts": 2,
+            "failed_logins": 12, "downloads": 1, "n_sessions": 4, "n_src_ips": 3}
+    quiet = {"suspicious_commands": 0, "port_scan": 0, "priv_esc_attempts": 0,
+             "failed_logins": 0, "downloads": 0, "n_sessions": 0, "n_src_ips": 0}
+
+    soc = SocState()
+    assert soc.as_defense_state()["evidence"] == 0.0
+
+    # Investigating a noisy window must build evidence.
+    soc.advance(D_INVESTIGATE, busy)
+    first = soc.evidence
+    assert first > 0.0, "investigate built no evidence on a noisy window"
+
+    # Containment must be refused below the threshold, and must not silently
+    # succeed — that refusal is what makes the policy keep hunting.
+    soc.evidence = DEFAULT_REWARDS.contain_isolate_evid - 0.5
+    out = soc.advance(D_ISOLATE, busy)
+    assert out["effect"] == "insufficient_evidence", out
+    assert soc.justified_containments == 0
+
+    # Above the threshold it fires and consumes the evidence that justified it.
+    soc.evidence = DEFAULT_REWARDS.contain_isolate_evid + 1.0
+    out = soc.advance(D_ISOLATE, busy)
+    assert out["effect"] == "contained", out
+    assert soc.justified_containments == 1
+    assert soc.evidence == 0.0, "containment did not consume its evidence"
+    assert soc.as_defense_state()["containment_active"] is True
+
+    # A second containment in the same tick window is refused (cooldown), so
+    # block-spam can't manufacture a win.
+    out = soc.advance(D_HARD_BLOCK, busy)
+    assert out["effect"] == "response_in_progress", out
+
+    # Evidence must decay, or the state ratchets up and never returns.
+    soc.evidence = 5.0
+    soc.decay()
+    assert soc.evidence < 5.0, "evidence did not decay"
+
+    # A dry hunt on a quiet window yields nothing (non-farmable, per §9).
+    soc.reset()
+    out = soc.advance(D_THREAT_HUNT, quiet)
+    assert out["effect"] == "hunt_dry" and soc.evidence == 0.0, out
+
+
+@test
 def config_loads_and_validates():
     from config_loader import ConfigError, RLConfig, get_config
     cfg = get_config()

@@ -110,6 +110,7 @@ class TelemetryAdapter:
         self,
         defense_state: Optional[Dict[str, Any]] = None,
         step_fraction: float = 0.5,
+        summary:       Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
         """
         Build the 12-dim normalized v4 defender observation from live telemetry.
@@ -118,10 +119,17 @@ class TelemetryAdapter:
         logins, egress, distinct hosts, credential anomalies). The SOC's own
         state — accumulated evidence, deployed decoys, whether a decoy was
         tripped, containment/rate-limit status, alert count — cannot be read
-        from raw honeypot logs; pass it in defense_state or leave it at 0.
+        from raw honeypot logs; pass it in defense_state (see soc_state.py) or
+        leave it at 0.
+
+        Pass `summary` when the caller has already fetched and summarized the
+        window. Without it this method issues its own ES query, which means a
+        caller that also summarizes queries twice per tick and can end up
+        displaying counters from a *different* query than the model scored.
         """
         ds      = defense_state or {}
-        summary = self.summarize(self.fetch_events())
+        if summary is None:
+            summary = self.summarize(self.fetch_events())
         # Observed anomalies = the attacker-noise proxy the SOC actually sees
         anomalies = (
             summary["suspicious_commands"]
