@@ -30,12 +30,17 @@ interface ToolActivity {
   message: string;
 }
 
+const FAST_POLL_MS = 5_000;   // threat feed + RL status
+const SLOW_POLL_MS = 30_000;  // tool activity (behind the /api/scan limiter)
+
 const CommandCenter = () => {
   const [attacks, setAttacks] = useState<AttackEvent[]>([]);
   const [tools, setTools] = useState<ToolActivity[]>([]);
   const [nashconv, setNashconv] = useState<number | null>(null);
   const [training, setTraining] = useState<string>("unknown");
+  const [toolsNote, setToolsNote] = useState<string | null>(null);
 
+  // Fast lane: the threat feed and RL status are the live parts of the view.
   useEffect(() => {
     const poll = async () => {
       try {
@@ -44,18 +49,37 @@ const CommandCenter = () => {
         setAttacks(d.attacks || []);
       } catch { /* honeypot stack offline */ }
       try {
-        const r = await fetch(`${API_BASE_URL}/api/scan/recent-tools`);
-        const d = await r.json();
-        setTools(d.tools || []);
-      } catch { /* express offline */ }
-      try {
         const r = await fetch(`${API_BASE_URL}/api/rl/status`);
         const d = await r.json();
         setTraining(d.is_training ? "training" : "idle");
       } catch { setTraining("offline"); }
     };
     poll();
-    const id = setInterval(poll, 5000);
+    const id = setInterval(poll, FAST_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // Slow lane: /api/scan is rate-limited (20 req / 15 min) because most of it
+  // does real network work. Polling tool activity on the fast interval spent
+  // the whole budget in ~100s and 429'd the panel for the rest of the window.
+  useEffect(() => {
+    const pollTools = async () => {
+      try {
+        const r = await fetch(`${API_BASE_URL}/api/scan/recent-tools`);
+        if (r.status === 429) {
+          setToolsNote("Rate-limited by the scan API — retrying shortly.");
+          return;
+        }
+        if (!r.ok) throw new Error(String(r.status));
+        const d = await r.json();
+        setTools(d.tools || []);
+        setToolsNote(null);
+      } catch {
+        setToolsNote("Backend offline — tool activity unavailable.");
+      }
+    };
+    pollTools();
+    const id = setInterval(pollTools, SLOW_POLL_MS);
     return () => clearInterval(id);
   }, []);
 
@@ -120,7 +144,7 @@ const CommandCenter = () => {
       {/* recent tool activity */}
       <CyberpunkCard title="RECENT TOOL ACTIVITY">
         {tools.length === 0 ? (
-          <Empty msg="No recent tool runs." />
+          <Empty msg={toolsNote ?? "No recent tool runs."} />
         ) : (
           <div className="space-y-1">
             {tools.slice(0, 8).map((t, i) => (

@@ -27,6 +27,15 @@ Endpoints:
   GET  /api/rl/metrics/history     – full training_history.json (chart arrays)
   GET  /api/rl/exploitability      – aggregated NashConv / best-response report
   GET  /api/rl/plots/<name>        – serve a results PNG (training_curves, …)
+  GET  /api/rl/shadow_eval         – shadow-mode evaluation report
+  GET  /api/rl/health              – which run dir / models this API is serving
+
+Run-directory resolution
+------------------------
+Results are not always at the save-dir root: a finished run is usually archived
+into `models/cyberx_marl/results/<run_name>/`. Every read goes through
+`_resolve_run_dir()` / `_run_file()` so the endpoints keep working after a run is
+archived. Set `RL_RUN_DIR` to pin a specific run.
 """
 
 import glob
@@ -69,6 +78,10 @@ _advisor_path    = None
 
 _SAVE_DIR        = "./models/cyberx_marl"
 _RESULTS_DIR     = os.path.join(_SAVE_DIR, "results")
+
+_SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT       = os.path.abspath(os.path.join(_SCRIPT_DIR, "..", "..", ".."))
+_ARTIFACTS_DIR   = os.path.join(_REPO_ROOT, "public", "rl-artifacts")
 
 
 # ── Log handler that pushes to the SSE queue ──────────────────────────────────
@@ -196,6 +209,53 @@ def get_exploitability():
     return jsonify(_aggregate_exploitability())
 
 
+@app.route("/api/rl/shadow_eval", methods=["GET"])
+def get_shadow_eval():
+    """Shadow-mode evaluation report for the active run (see shadow_eval.py).
+    404s when the run has none — the frontend then falls back to the baked
+    artifact, same as every other RL read."""
+    report = _read_json(_run_file("shadow_eval.json"), None)
+    if report is None:
+        matches = glob.glob(
+            os.path.join(os.path.abspath(_RESULTS_DIR), "**", "shadow_eval.json"),
+            recursive=True)
+        if matches:
+            report = _read_json(max(matches, key=os.path.getmtime), None)
+    if report is None:
+        return jsonify({"error": "no shadow evaluation for this run"}), 404
+    return jsonify(report)
+
+
+@app.route("/api/rl/health", methods=["GET"])
+def get_health():
+    """What this API is actually serving. The dashboards degrade silently when a
+    run is archived or a model is missing; this makes the cause one request away."""
+    run_dir, source = _resolve_run_dir_with_source()
+    history = _load_history()
+    models = {}
+    for role in ("attacker", "defender"):
+        path = _model_path(role)
+        models[role] = {"path": path, "exists": bool(path and os.path.exists(path))}
+
+    return jsonify({
+        "status":         "ok",
+        "run_dir":        run_dir,
+        "run_dir_source": source,
+        "iterations":     len(history.get("iterations", [])),
+        "files": {
+            name: bool(_run_file(name)) for name in (
+                "training_history.json", "training_metrics.json",
+                "elo_ratings.json", "training_curves.png", "shadow_eval.json")
+        },
+        "models":         models,
+        "is_training":    _is_training,
+        "demo_running":   _demo_running,
+        "exploitability_reports": _aggregate_exploitability()["n_runs"],
+        "artifact_manifest": _read_json(
+            os.path.join(_ARTIFACTS_DIR, "manifest.json"), None),
+    })
+
+
 @app.route("/api/rl/plots/<path:name>", methods=["GET"])
 def get_plot(name: str):
     """Serve a results PNG. `training_progress` is aliased to training_curves.png
@@ -204,6 +264,11 @@ def get_plot(name: str):
         name = "training_curves.png"
     if not name.endswith(".png"):
         name += ".png"
+    # Prefer the active run's copy, so the plot matches the history/leaderboard.
+    active = _run_file(name)
+    if active:
+        return send_from_directory(os.path.dirname(active),
+                                   os.path.basename(active), mimetype="image/png")
     abs_dir = os.path.abspath(_RESULTS_DIR)
     if os.path.exists(os.path.join(abs_dir, name)):
         return send_from_directory(abs_dir, name, mimetype="image/png")
@@ -220,12 +285,7 @@ def get_plot(name: str):
 
 @app.route("/api/rl/leaderboard", methods=["GET"])
 def get_leaderboard():
-    elo_path = "./models/cyberx_marl/results/elo_ratings.json"
-    if not os.path.exists(elo_path):
-        return jsonify({"leaderboard": []})
-    with open(elo_path) as f:
-        elo_data = json.load(f)
-    ratings = elo_data.get("ratings", {})
+    ratings = _read_json(_run_file("elo_ratings.json"), {}).get("ratings", {})
     board   = sorted(ratings.items(), key=lambda x: -x[1])
     return jsonify({
         "leaderboard": [{"agent": k, "elo": round(v)} for k, v in board]
@@ -299,13 +359,26 @@ def oracle_query():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _model_path(role: str) -> Optional[str]:
-    """Best snapshot if available, else the latest training weights."""
-    best = (_config.get_best_attacker_path() if role == "attacker"
-            else _config.get_best_defender_path())
-    if os.path.exists(best):
-        return best
-    latest = f"./models/cyberx_marl/{role}_latest.zip"
-    return latest if os.path.exists(latest) else None
+    """Weights for `role`: the configured best snapshot, else the active run's
+    best/latest, else the save-dir latest.
+
+    The run-dir candidates matter because archiving a finished run moves its
+    *_best.zip out of the save-dir root — without them the Copilot, demo and
+    telemetry endpoints all 404 'no trained model' while five runs' worth of
+    weights sit on disk.
+    """
+    configured = (_config.get_best_attacker_path() if role == "attacker"
+                  else _config.get_best_defender_path())
+    run_dir = _resolve_run_dir()
+    for candidate in (
+        configured,
+        os.path.join(run_dir, f"{role}_best.zip"),
+        os.path.join(run_dir, f"{role}_latest.zip"),
+        os.path.join(_SAVE_DIR, f"{role}_latest.zip"),
+    ):
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def _demo_put(event: dict) -> None:
@@ -557,20 +630,63 @@ def telemetry_stream():
 #   HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load_history() -> dict:
-    path = "./models/cyberx_marl/training_history.json"
-    if os.path.exists(path):
+def _resolve_run_dir_with_source() -> tuple:
+    """Locate the run whose results this API should serve, and say why.
+
+    A run in progress writes its history to the save-dir root; a finished run is
+    usually archived into `results/<run_name>/`. Reading only the root (the
+    original behaviour) returned empty history/leaderboard for every archived
+    run, which made the live dashboards *worse* than the baked artifacts.
+    """
+    env = os.environ.get("RL_RUN_DIR")
+    if env:
+        return os.path.abspath(env), "env:RL_RUN_DIR"
+
+    if os.path.exists(os.path.join(_SAVE_DIR, "training_history.json")):
+        return os.path.abspath(_SAVE_DIR), "save_dir"
+
+    archived = glob.glob(os.path.join(_RESULTS_DIR, "*", "training_history.json"))
+    if archived:
+        newest = max(archived, key=os.path.getmtime)
+        return os.path.abspath(os.path.dirname(newest)), "newest_archived_run"
+
+    return os.path.abspath(_SAVE_DIR), "default"
+
+
+def _resolve_run_dir() -> str:
+    return _resolve_run_dir_with_source()[0]
+
+
+def _run_file(name: str) -> Optional[str]:
+    """Path to a results file for the active run, or None.
+
+    Archived runs keep their results next to the history; a live run keeps them
+    in a `results/` subdir. Check both so either layout resolves.
+    """
+    run_dir = _resolve_run_dir()
+    for candidate in (os.path.join(run_dir, name),
+                      os.path.join(run_dir, "results", name)):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _read_json(path: Optional[str], default):
+    if not path:
+        return default
+    try:
         with open(path) as f:
             return json.load(f)
-    return {}
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _load_history() -> dict:
+    return _read_json(_run_file("training_history.json"), {})
 
 
 def _latest_metrics() -> dict:
-    metrics_path = "./models/cyberx_marl/results/training_metrics.json"
-    if not os.path.exists(metrics_path):
-        return {}
-    with open(metrics_path) as f:
-        all_m = json.load(f)
+    all_m = _read_json(_run_file("training_metrics.json"), [])
     return all_m[-1] if all_m else {}
 
 
