@@ -2,6 +2,8 @@
 
 > Handoff doc for continuing work on the CyberX reinforcement-learning stack
 > in a fresh session. Written 2026-06-11. Branch: `rl_upgrade`.
+> **Updated 2026-08-05 on branch `rl_integration` (off `master`) — see §17,
+> which supersedes §12's "next steps" and parts of §11.**
 
 ---
 
@@ -623,3 +625,97 @@ roughly ordered; each is independently valuable.
 4. Ground in ATT&CK + validate via telemetry (Phase D) for the security story.
 5. Write it up: workshop/benchmark/experience paper framed on the reward-design
    pitfalls + exploitability methodology (see §15 publishability note).
+
+---
+
+## 17. Integration & PFSP work (2026-08-05, branch `rl_integration`)
+
+Branch `rl_integration`, cut from `master` (which already carries the merged
+`rl_upgrade` work, the streaming SSE proxy and `docs/RL_HONEYPOT_INTEGRATION.md`).
+Four commits: `e095509`, `b2719e4`, `6c2b19c`, `75e75b8`.
+
+### Two defects that invalidated existing results
+
+**Live mode was worse than replay.** Runs are archived into
+`results/run_four_{a..e}/`, but `/status`, `/metrics*` and `/leaderboard` still
+read the save-dir root, where those files no longer exist. `fetchRL` treats any
+200 as live, so starting Flask *replaced* the real 50-iteration dashboard with an
+empty one. The newest-subdir fallback added to `/plots` in `4df8b36` was never
+applied elsewhere. Fixed with `_resolve_run_dir()` / `_run_file()`; `_model_path()`
+had the same bug, which is why the Copilot and demo 404'd with five runs of
+weights on disk. New `/api/rl/health` reports which run and models are being
+served.
+
+**The shadow-mode defender was a constant policy.** The committed
+`shadow_eval.json` reported 65% "reasonable agreement" while emitting
+`threat_hunt` for all 20 windows — the score was high *because* the action was
+constant. Root cause was the observation, not the policy: `shadow_eval.py`
+hardcoded 8 of 12 dims (evidence pinned at 0, so the containment branch was
+unreachable) and `hosts_anomalous / max_footholds` saturated at 1.0. In-sim,
+"anomalies present, no evidence" is exactly when hunting is correct.
+
+`soc_state.py` closes the loop: a `SocState` mirroring the defender half of the
+env's step function, fed the recommended action so evidence accrues, containment
+fires and consumes it, and the next observation reflects it. Reproduced the
+original exactly (run_four_a, uniform synthetic window, frozen posture, one LSTM
+rollout): `threat_hunt` 20/20, entropy −0.00. With the loop closed and episodes
+segmented: 4 distinct actions, 1.71 bits, 1 justified containment. **The frozen
+arm stays at 20/20 even on phase-varying telemetry — the frozen posture, not the
+input, was the binding constraint.** Exact agreement drops 0.10 → 0.05 on the
+legacy window and rises to 0.45 on phase-varying telemetry; the old number
+measured nothing. `shadow_eval.py --baseline` keeps both arms in one report, and
+a `constant_policy` flag now fires when entropy collapses.
+
+### PFSP is built (§12's #1 item)
+
+The blocker was per-opponent win rates. Training already generates them — the env
+now tallies each episode against `_opponent_id` and the trainer drains it via
+`env_method`. `_roll_opponent_mix` draws ghosts with `f_hard(1-win_rate) = x^p`.
+Guards: `pfsp_min_games` keeps sparse opponents neutral, and a floor stops any
+ghost being starved (which would recreate the specialization the league prevents).
+
+Config: `league.pfsp {enabled:false, p:2.0, min_games:5}` — **off by default so
+the uniform arm is the control**. Verified at `n_envs=8`: weights
+`[0.111, 0.02, 0.028]` for win rates `[0.67, 0.91, 0.83]`. Note `n_envs=4` gives
+**zero** ghost slots (4 − 3 scripted − 1 latest), so PFSP is inert there.
+
+**The experiment has not been run** — that is the next step:
+```
+python run_sweep.py --tag uniform --seeds 1 2 3 --iterations 30 --no-pfsp
+python run_sweep.py --tag pfsp    --seeds 1 2 3 --iterations 30 --pfsp
+python exploitability.py --run-dir <each> --side defender --br-iterations 40
+python run_sweep.py --compare pfsp uniform
+```
+Success = the defender's `gap_over_equilibrium` falls from 0.25 ± 0.07 and
+NashConv below 0.36 ± 0.06. Report overlapping CIs as overlapping.
+
+### Also landed
+
+- `run_sweep.py` (true multi-seed + bootstrap CIs — retires the "5 seeds that
+  are all seed 42" caveat), `crossplay.py` (N×N matrix, empirical Nash by
+  fictitious play, transitivity violations — pure inference, cheapest result
+  left), `wandb_logger.py` (opt-in), `--ablate {bc,curriculum,league,entropy_warmup}`.
+- `exploitability.py` reports the trailing mean beside `max(curve)` and flags
+  unconverged probes, removing the §15 noise-max caveat.
+- `attack_grounding.py`: 26 actions → ATT&CK / D3FEND, IDs verified against the
+  MITRE sites. **Three entries in the old frontend map were wrong**: Credential
+  Rotation is `D3-CRO`, and D3FEND has no "Alerting" or "System Restore"
+  technique — those are now explicitly unmapped. A test keeps the Python table,
+  the env's action order and the TS map in sync.
+- `/train/start` spawns `run_training.py` instead of running the trainer in a
+  Flask thread — the in-process path skipped the crash supervisor *and* its
+  worker-tree kill, so a driver fault orphaned `n_envs×2` workers.
+- First CI (`.github/workflows/ci.yml`): `tsc` and `tests_rl.py` are hard gates;
+  eslint is gated on the RL/dashboard surface and advisory on the full tree
+  (~350 pre-existing `no-explicit-any` errors).
+- `prune_artifacts.py` — stride retention for the ~4 GB `models/` tree
+  (1.74 GB reclaimable). Dry-run by default; **not applied**.
+- `export_artifacts.py --all` regenerates all seven artifacts with a sha256
+  manifest. `copilot_sample.json` was **hand-authored** — the hosted site was
+  showing invented "trained defender" output; it is now recorded from the model.
+
+### Test count
+
+**20** self-tests (was 17): added `soc_state_closes_the_observation_loop`,
+`pfsp_prioritizes_losses_without_starving_the_pool`,
+`attack_grounding_matches_env_and_frontend`.
