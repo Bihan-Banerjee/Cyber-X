@@ -1,10 +1,50 @@
 {
-  "generated_at": "2026-06-17T16:33:31.857720+00:00",
+  "generated_at": "2026-08-05T15:56:24.850293+00:00",
   "source_run": "run_four_a",
   "n_iterations": 50,
   "nashconv": {
     "mean": 0.359,
     "std": 0.061
   },
-  "note": "Baked snapshot of a real CyberX MARL run for the hosted site / replay mode. Regenerate with export_artifacts.py."
+  "regenerated": {
+    "demo": true,
+    "shadow": true
+  },
+  "files": {
+    "copilot_sample.json": {
+      "sha256": "0e6462e4d19c3f5aa22f21b3192b4f04d46c726b1eabb690467c95f8edeaa1a8",
+      "bytes": 4516
+    },
+    "demo_episode.json": {
+      "sha256": "56590fa0be392e5e9468ca555b648919dd0e142540a96f38babda5f86526c95a",
+      "bytes": 2844
+    },
+    "exploitability.json": {
+      "sha256": "bb349a30bb6d785f9358752508626e7c1c49a88181a94ddbac5406a2316452e7",
+      "bytes": 1921
+    },
+    "leaderboard.json": {
+      "sha256": "6a328fba0b33ad26887fa7964523b5dfee1cde7c4f2fe912bed03c12cb520175",
+      "bytes": 7396
+    },
+    "metrics_history.json": {
+      "sha256": "eac3d0b8fc1e0aef7835ce7a23929be63567198532ec60f1096b5f47d750d92f",
+      "bytes": 6273
+    },
+    "shadow_eval.json": {
+      "sha256": "e90d5b02b875f34f89af43d70a3921c8eb4a6633f0571e10b63a677ca5105843",
+      "bytes": 10873
+    },
+    "training_curves.png": {
+      "sha256": "ff3f5305934aa40f41c28b9af3f90dc29d9a4c7d06b29f3e84a3b2780adf8fcb",
+      "bytes": 268642
+    }
+  },
+  "note": "Baked snapshot of a real CyberX MARL run for the hosted site / replay mode. Regenerate with `export_artifacts.py --all`.",
+  "shadow_eval": {
+    "distinct_actions": 4,
+    "action_entropy_bits": 1.533,
+    "exact_agreement": 0.45,
+    "constant_policy": false
+  }
 }

@@ -13,7 +13,9 @@ import CyberpunkCard from "@/components/CyberpunkCard";
 import DefenderCopilot from "@/components/DefenderCopilot";
 import { API_BASE_URL } from "@/lib/api";
 import { fetchRL, type ExploitabilityReport } from "@/lib/rlData";
-import { Activity, AlertTriangle, Crosshair, MapPin, Radio, Wrench } from "lucide-react";
+import {
+  Activity, AlertTriangle, Crosshair, MapPin, Radio, Wrench, type LucideIcon,
+} from "lucide-react";
 
 interface AttackEvent {
   timestamp: string;
@@ -176,7 +178,7 @@ const CommandCenter = () => {
 };
 
 const Health = ({ icon: Icon, label, value, color }:
-  { icon: any; label: string; value: any; color: string }) => (
+  { icon: LucideIcon; label: string; value: React.ReactNode; color: string }) => (
   <div className="glass-panel rounded p-5">
     <Icon className={`w-7 h-7 ${color} mb-3`} />
     <div className={`text-2xl font-bold ${color}`}>{value}</div>
