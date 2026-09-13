@@ -39,6 +39,8 @@ import subprocess
 import sys
 import time
 
+from stats_util import iqm
+
 _SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
 _RESULTS_DIR = os.path.join(_SCRIPT_DIR, "models", "cyberx_marl", "results")
 
@@ -66,9 +68,15 @@ def bootstrap_ci(values, n_boot: int = 10_000, alpha: float = 0.05, seed: int = 
 def summarize(values, last_n: int = 10) -> dict:
     vals = [v for v in values if v is not None]
     if not vals:
-        return {"mean": None, "std": None, "n": 0, "ci95": {"lo": None, "hi": None}}
+        return {"mean": None, "iqm": None, "std": None, "n": 0,
+                "ci95": {"lo": None, "hi": None}}
+    iqm_val = iqm(vals)
     return {
         "mean": round(statistics.fmean(vals), 4),
+        # IQM (mean of the middle 50%) is the robust central estimate Agarwal
+        # et al. (2021) recommend for small-n RL sweeps — less swayed by a
+        # single lucky/unlucky seed than the bare mean.
+        "iqm":  round(iqm_val, 4) if iqm_val is not None else None,
         "std":  round(statistics.pstdev(vals), 4) if len(vals) > 1 else 0.0,
         "n":    len(vals),
         "ci95": bootstrap_ci(vals),
@@ -152,7 +160,8 @@ def print_agg(agg: dict) -> None:
             continue
         ci = s["ci95"]
         span = f"  95% CI [{ci['lo']}, {ci['hi']}]" if ci["lo"] is not None else ""
-        print(f"    {key:14s} {s['mean']:.3f} ± {s['std']:.3f}{span}")
+        iqm_str = f"  IQM {s['iqm']:.3f}" if s.get("iqm") is not None else ""
+        print(f"    {key:14s} {s['mean']:.3f} ± {s['std']:.3f}{iqm_str}{span}")
 
 
 def main() -> None:

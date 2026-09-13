@@ -57,6 +57,7 @@ from baselines import (
 from config_loader import RLConfig, get_config
 from evaluator import MARLEvaluator
 from llm_oracle import LLMOracle
+from provenance import write_run_manifest
 from progress import (
     CyberXProgressCallback,
     print_final_summary,
@@ -179,6 +180,16 @@ class MARLTrainer:
             },
             run_name = os.path.basename(os.path.normpath(save_dir)),
         )
+
+        # Provenance: a run_manifest.json capturing git SHA, resolved-config
+        # hash, seed, and library versions, so a figure can be traced back to
+        # the exact commit/config that produced it. Kept on resume (the manifest
+        # reflects the run's origin). Never let bookkeeping kill a run.
+        try:
+            write_run_manifest(save_dir, self.seed, self.cfg.resolved(),
+                               extra={"pfsp_enabled": self.cfg.league.pfsp_enabled})
+        except Exception as exc:
+            logger.warning("Could not write run manifest: %s", exc)
 
         self.history: Dict = {
             "iterations": [], "curriculum_levels": [],

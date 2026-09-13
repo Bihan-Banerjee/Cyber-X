@@ -235,6 +235,10 @@ class RLConfig:
     def get_llm_config(self) -> Dict[str, Any]:
         return dict(self.llm)
 
+    def resolved(self) -> Dict[str, Any]:
+        """The raw config dict as loaded — for the run manifest / config hash."""
+        return dict(self._raw)
+
     def update_best_models(self, iteration: int) -> None:
         ckpt_dir = self.model_paths["checkpoints_dir"]
         self.model_paths["attacker_best"] = f"{ckpt_dir}/attacker_iter_{iteration}.zip"
