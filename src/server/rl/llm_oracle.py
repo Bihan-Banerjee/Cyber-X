@@ -167,6 +167,10 @@ class LLMOracle:
         self.parse_failures  = 0
         self.api_errors      = 0
 
+        # Last parsed reasoning string (the JSON "reasoning" field), exposed so
+        # callers like the red-team probe can record a per-step rationale trace.
+        self.last_reasoning: Optional[str] = None
+
         self._system_prompt = (
             ATTACKER_SYSTEM_PROMPT if role == "attacker" else DEFENDER_SYSTEM_PROMPT
         )
@@ -466,9 +470,13 @@ class LLMOracle:
         if text.startswith("json"):
             text = text[4:].strip()
 
+        self.last_reasoning = None
         try:
             data = json.loads(text)
             action_name = data.get("action", "").lower().strip()
+            reasoning = data.get("reasoning")
+            if isinstance(reasoning, str):
+                self.last_reasoning = reasoning.strip()
         except json.JSONDecodeError:
             # Fallback: look for any action name string in the response
             action_name = ""

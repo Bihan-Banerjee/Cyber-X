@@ -662,6 +662,41 @@ def repeatable_actions_are_not_farmable():
         assert total <= 0.0, f"{label} spam is farmable (return {total:.1f})"
 
 
+@test
+def calibration_recovers_known_brute_params():
+    """The calibration harness must recover a KNOWN synthetic brute-force curve
+    (base near the true 0.28) and never emit an unsafe zero floor override."""
+    from red_team.calibrate import (
+        _synthetic_login_events, brute_force_curve, estimate_brute_params,
+        _env_brute_defaults)
+    events = _synthetic_login_events(1500)   # true base 0.28, decay 0.02, min 0.08
+    curve = brute_force_curve(events)
+    assert curve["total_attempts"] > 0 and curve["total_successes"] > 0
+    est = estimate_brute_params(curve, _env_brute_defaults())
+    base = est["overrides"].get("p_brute_base")
+    assert base is not None, "base should be grounded with this much data"
+    assert 0.20 <= base <= 0.36, f"recovered base {base} off true 0.28"
+    assert est["overrides"].get("p_brute_min", 0.01) > 0.0, "unsafe zero floor emitted"
+    from dataclasses import fields
+    from shared_honeypot_env import RewardConfig
+    valid = {f.name for f in fields(RewardConfig)}
+    assert set(est["overrides"]) <= valid, "override key is not a RewardConfig field"
+
+
+@test
+def red_team_playbook_matches_attack_grounding():
+    """The red-team playbook carries no ATT&CK IDs of its own — it derives them
+    from the single source of truth (attack_grounding), so the demo, the UI, and
+    the paper table can never drift apart."""
+    from attack_grounding import ATTACKER_GROUNDING
+    from red_team.playbook import ATT_CK_MAP
+    for g in ATTACKER_GROUNDING:
+        info = ATT_CK_MAP.get(g.action)
+        assert info is not None, f"playbook missing action {g.action}"
+        assert info["technique_id"] == (g.technique or "—"), \
+            f"{g.action}: playbook {info['technique_id']} != grounding {g.technique}"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
