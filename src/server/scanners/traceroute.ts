@@ -1,9 +1,12 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
 
-const execAsync = promisify(exec);
+// execFile (no shell) instead of exec: the target is passed as an argv element,
+// never interpolated into a shell command string, so shell metacharacters in
+// `target` cannot inject commands even if the route-level validation regresses.
+const execFileAsync = promisify(execFile);
 
 export interface Hop {
   hop: number;
@@ -98,13 +101,17 @@ export async function performTraceroute(
   logToolActivity('Traceroute', `Running traceroute to ${target}`, 'info');
 
   const isWindows = process.platform === 'win32';
-  const command = isWindows
-    ? `tracert -h ${maxHops} -w 3000 ${target}`
-    : `traceroute -m ${maxHops} -w 3 ${target}`;
+  // Clamp hop count to a sane bounded integer (defends against NaN / huge values).
+  const safeMaxHops = Math.min(Math.max(1, Math.floor(Number(maxHops) || 30)), 64);
+  const bin = isWindows ? 'tracert' : 'traceroute';
+  const args = isWindows
+    ? ['-h', String(safeMaxHops), '-w', '3000', target]
+    : ['-m', String(safeMaxHops), '-w', '3', target];
 
   try {
-    const { stdout, stderr } = await execAsync(command, {
+    const { stdout, stderr } = await execFileAsync(bin, args, {
       timeout: timeoutMs,
+      maxBuffer: 1024 * 1024,
     });
 
     const output = stdout || stderr;

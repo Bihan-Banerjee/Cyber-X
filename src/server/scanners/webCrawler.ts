@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface CrawlResult {
   url: string;
@@ -52,6 +53,7 @@ export async function crawlWebsite(
 ): Promise<CrawlResult> {
   const start = performance.now();
   logToolActivity('Web Crawler', `Crawling ${startUrl} (depth=${maxDepth}, max=${maxPages})`, 'info');
+  assertUrlAllowed(startUrl);
 
   const baseOrigin = new URL(startUrl).origin;
   const visited = new Set<string>();

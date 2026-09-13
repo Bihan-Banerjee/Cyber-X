@@ -35,6 +35,7 @@ import {
   generatePcapFile,
 } from '../scanners/packetCapturer.js';
 import { logToolActivity, getRecentToolActivity } from '../utils/activityLogger.js';
+import { clientErrorMessage } from '../utils/safeError.js';
 import { getSystemResources } from '../scanners/systemResources.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
 import { performSSLAnalysis } from '../scanners/sslAnalyzer.js';
@@ -119,8 +120,12 @@ interface VulnFuzzResult {
 }
 
 const router = express.Router();
-// Configure multer for memory storage
-const upload = multer({ storage: multer.memoryStorage() });
+// Configure multer for memory storage with hard limits — memoryStorage with no
+// limit let a single request buffer an unbounded upload into RAM (DoS).
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },   // 25 MB, one file
+});
 
 // Validation helper
 function isValidTarget(target: string): boolean {
@@ -192,7 +197,7 @@ router.post('/ports', async (req, res) => {
     console.error('Port scan error:', error);
     res.status(500).json({
       error: 'Scan failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -224,7 +229,7 @@ router.post('/os-fingerprint', async (req, res) => {
     console.error('OS fingerprint error:', error);
     res.status(500).json({
       error: 'Fingerprint failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -255,7 +260,7 @@ router.post('/whois', async (req, res) => {
     console.error('WHOIS lookup error:', error);
     res.status(500).json({
       error: 'WHOIS lookup failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -287,7 +292,7 @@ router.post('/service-detect', async (req, res) => {
     console.error('Service detection error:', error);
     res.status(500).json({
       error: 'Service detection failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -320,7 +325,7 @@ router.post('/subdomains', async (req, res) => {
     console.error('Subdomain enumeration error:', error);
     res.status(500).json({
       error: 'Subdomain enumeration failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -353,7 +358,7 @@ router.post('/dns-recon', async (req, res) => {
     console.error('DNS recon error:', error);
     res.status(500).json({
       error: 'DNS reconnaissance failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -387,7 +392,7 @@ router.post('/api-scanner', async (req, res) => {
     console.error('API scan error:', error);
     res.status(500).json({
       error: 'API scan failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -413,7 +418,7 @@ router.post('/breach-check', async (req, res) => {
     console.error('Breach check error:', error);
     res.status(500).json({
       error: 'Breach check failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -445,7 +450,7 @@ router.post('/hash-crack', async (req, res) => {
     console.error('Hash crack error:', error);
     res.status(500).json({
       error: 'Hash cracking failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -473,7 +478,7 @@ router.post('/dir-fuzz', async (req, res) => {
     console.error('Directory fuzzing error:', error);
     res.status(500).json({
       error: 'Directory fuzzing failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -507,7 +512,7 @@ router.post('/auth-check', async (req, res) => {
     console.error('Auth check error:', error);
     res.status(500).json({
       error: 'Authentication check failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -535,7 +540,7 @@ router.post('/container-scan', async (req, res) => {
     console.error('Container scan error:', error);
     res.status(500).json({
       error: 'Container scan failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -561,7 +566,7 @@ router.post('/cipher-process', async (req, res) => {
     console.error('Cipher process error:', error);
     res.status(500).json({
       error: 'Cipher processing failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -587,7 +592,7 @@ router.post('/cipher-analyze', async (req, res) => {
     console.error('Cipher analyze error:', error);
     res.status(500).json({
       error: 'Cipher analysis failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -613,7 +618,7 @@ router.post('/vuln-fuzz', async (req, res) => {
     console.error('Vulnerability fuzzing error:', error);
     res.status(500).json({
       error: 'Vulnerability fuzzing failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -641,7 +646,7 @@ router.post('/s3-finder', async (req, res) => {
     console.error('S3 bucket finding error:', error);
     res.status(500).json({
       error: 'S3 bucket finding failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -669,7 +674,7 @@ router.post('/k8s-enum', async (req, res) => {
     console.error('K8s enumeration error:', error);
     res.status(500).json({
       error: 'K8s enumeration failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -695,7 +700,7 @@ router.post('/jwt-decode', async (req, res) => {
     console.error('JWT decode error:', error);
     res.status(500).json({
       error: 'JWT decoding failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -719,7 +724,7 @@ router.post('/ip-geo', async (req, res) => {
     console.error('IP geolocation error:', error);
     res.status(500).json({
       error: 'IP geolocation lookup failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -754,7 +759,7 @@ router.post('/reverse-ip', async (req, res) => {
     console.error('Reverse IP lookup error:', error);
     res.status(500).json({
       error: 'Reverse IP lookup failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -774,7 +779,7 @@ router.post('/crypto-process', async (req, res) => {
     console.error('Crypto process error:', error);
     res.status(500).json({
       error: 'Encryption/Decryption failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -794,7 +799,7 @@ router.post('/crypto-generate-keys', async (req, res) => {
     console.error('Key generation error:', error);
     res.status(500).json({
       error: 'Key generation failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -818,7 +823,7 @@ router.post('/packet-analyze', async (req, res) => {
     console.error('Packet analysis error:', error);
     res.status(500).json({
       error: 'Packet analysis failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -842,7 +847,7 @@ router.post('/image-metadata', upload.single('image'), async (req, res) => {
     console.error('Image metadata extraction error:', error);
     res.status(500).json({
       error: 'Metadata extraction failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -876,7 +881,7 @@ router.post('/stego-hide', upload.single('coverImage'), async (req, res) => {
     console.error('Steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -905,7 +910,7 @@ router.post('/stego-extract', upload.single('stegoImage'), async (req, res) => {
     console.error('Steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -939,7 +944,7 @@ router.post('/audio-stego-hide', upload.single('coverAudio'), async (req, res) =
     console.error('Audio steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -968,7 +973,7 @@ router.post('/audio-stego-extract', upload.single('stegoAudio'), async (req, res
     console.error('Audio steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1003,7 +1008,7 @@ router.post('/doc-stego-hide', upload.single('coverDocument'), async (req, res) 
     console.error('Document steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1032,7 +1037,7 @@ router.post('/doc-stego-extract', upload.single('stegoDocument'), async (req, re
     console.error('Document steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1067,7 +1072,7 @@ router.post('/video-stego-hide', upload.single('coverVideo'), async (req, res) =
     console.error('Video steganography hide error:', error);
     res.status(500).json({
       error: 'Failed to hide data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1096,7 +1101,7 @@ router.post('/video-stego-extract', upload.single('stegoVideo'), async (req, res
     console.error('Video steganography extract error:', error);
     res.status(500).json({
       error: 'Failed to extract data',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1122,7 +1127,7 @@ router.post('/osint-search', async (req, res) => {
     console.error('OSINT search error:', error);
     res.status(500).json({
       error: 'OSINT search failed',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1136,7 +1141,7 @@ router.get('/network-interfaces', async (req, res) => {
     console.error('Network interfaces error:', error);
     res.status(500).json({
       error: 'Failed to get network interfaces',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1160,7 +1165,7 @@ router.post('/start-capture', async (req, res) => {
     console.error('Start capture error:', error);
     res.status(500).json({
       error: 'Failed to start capture',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1177,7 +1182,7 @@ router.post('/stop-capture', async (req, res) => {
     console.error('Stop capture error:', error);
     res.status(500).json({
       error: 'Failed to stop capture',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1191,7 +1196,7 @@ router.get('/capture-packets', async (req, res) => {
     console.error('Get packets error:', error);
     res.status(500).json({
       error: 'Failed to get packets',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1208,7 +1213,7 @@ router.get('/download-pcap', async (req, res) => {
     console.error('Download PCAP error:', error);
     res.status(500).json({
       error: 'Failed to download PCAP',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1222,7 +1227,7 @@ router.get('/recent-tools', async (req, res) => {
     console.error('Recent tools error:', error);
     res.status(500).json({
       error: 'Failed to get recent tools',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1236,7 +1241,7 @@ router.get('/recent-tools', async (req, res) => {
 //    console.error('System resources error:', error);
 //    res.status(500).json({
 //      error: 'Failed to get system resources',
-//      message: error.message,
+//      message: clientErrorMessage(error),
 //    });
 //  }
 //});
@@ -1253,7 +1258,7 @@ router.get('/system-resources', resourceLimiter, async (req, res) => {
     console.error('System resources error:', error);
     res.status(500).json({
       error: 'Failed to get system resources',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -1276,7 +1281,7 @@ router.post('/ssl-analyzer', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('SSL Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'SSL analysis failed', message: error.message });
+    res.status(500).json({ error: 'SSL analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1295,7 +1300,7 @@ router.post('/http-headers', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('HTTP Header Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Header analysis failed', message: error.message });
+    res.status(500).json({ error: 'Header analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1313,7 +1318,7 @@ router.post('/cve-search', cveLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('CVE Search', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'CVE search failed', message: error.message });
+    res.status(500).json({ error: 'CVE search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1329,7 +1334,7 @@ router.post('/file-hash', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('File Hash Calculator', `Hash calculation failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Hash calculation failed', message: error.message });
+    res.status(500).json({ error: 'Hash calculation failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1348,7 +1353,7 @@ router.post('/username-enum', usernameLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Username Enumerator', `Enumeration failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Username enumeration failed', message: error.message });
+    res.status(500).json({ error: 'Username enumeration failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1365,7 +1370,7 @@ router.post('/malware-hash', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Malware Hash Lookup', `Lookup failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Hash lookup failed', message: error.message });
+    res.status(500).json({ error: 'Hash lookup failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1389,7 +1394,7 @@ router.post('/sqli-test', sqliLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('SQL Injection Tester', `Test failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'SQLi test failed', message: error.message });
+    res.status(500).json({ error: 'SQLi test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1412,7 +1417,7 @@ router.post('/xss-test', xssLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('XSS Payload Generator', `Test failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'XSS test failed', message: error.message });
+    res.status(500).json({ error: 'XSS test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1431,7 +1436,7 @@ router.post('/tech-fingerprint', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Tech Fingerprinter', `Fingerprinting failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Tech fingerprinting failed', message: error.message });
+    res.status(500).json({ error: 'Tech fingerprinting failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1477,7 +1482,7 @@ router.post('/wordlist-gen', wordlistLimiter, async (req, res) => {
     }
   } catch (error: any) {
     logToolActivity('Wordlist Generator', `Generation failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Wordlist generation failed', message: error.message });
+    res.status(500).json({ error: 'Wordlist generation failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1499,7 +1504,7 @@ router.post('/ct-search', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('CT Log Search', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'CT log search failed', message: error.message });
+    res.status(500).json({ error: 'CT log search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1520,7 +1525,7 @@ router.post('/email-spoof-check', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Spoofed Email Checker', `Check failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Email spoof check failed', message: error.message });
+    res.status(500).json({ error: 'Email spoof check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1537,7 +1542,7 @@ router.post('/ip-reputation', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('IP Reputation Checker', `Check failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Reputation check failed', message: error.message });
+    res.status(500).json({ error: 'Reputation check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1551,7 +1556,7 @@ router.post('/hex-view', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Hex Viewer', `Processing failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Hex dump failed', message: error.message });
+    res.status(500).json({ error: 'Hex dump failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1566,7 +1571,7 @@ router.post('/string-extract', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('String Extractor', `Extraction failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'String extraction failed', message: error.message });
+    res.status(500).json({ error: 'String extraction failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1580,7 +1585,7 @@ router.post('/file-type', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('File Type Identifier', `Identification failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'File type identification failed', message: error.message });
+    res.status(500).json({ error: 'File type identification failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1597,7 +1602,7 @@ router.post('/exploit-search', exploitLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Exploit-DB Search', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Exploit search failed', message: error.message });
+    res.status(500).json({ error: 'Exploit search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1614,7 +1619,7 @@ router.post('/cookie-analyze', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Cookie Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Cookie analysis failed', message: error.message });
+    res.status(500).json({ error: 'Cookie analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1632,7 +1637,7 @@ router.post('/ssrf-test', ssrfLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('SSRF Tester', `Test failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'SSRF test failed', message: error.message });
+    res.status(500).json({ error: 'SSRF test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1648,7 +1653,7 @@ router.post('/traceroute', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Traceroute', `Traceroute failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Traceroute failed', message: error.message });
+    res.status(500).json({ error: 'Traceroute failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1663,7 +1668,7 @@ router.post('/asn-lookup', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('BGP/ASN Lookup', `Lookup failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'ASN lookup failed', message: error.message });
+    res.status(500).json({ error: 'ASN lookup failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1678,7 +1683,7 @@ router.post('/phone-lookup', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Phone OSINT', `Lookup failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Phone lookup failed', message: error.message });
+    res.status(500).json({ error: 'Phone lookup failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1695,7 +1700,7 @@ router.post('/domain-reputation', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Domain Reputation', `Check failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Domain reputation check failed', message: error.message });
+    res.status(500).json({ error: 'Domain reputation check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1712,7 +1717,7 @@ router.post('/robots-analyze', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Robots.txt Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Robots.txt analysis failed', message: error.message });
+    res.status(500).json({ error: 'Robots.txt analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1727,7 +1732,7 @@ router.post('/snmp-scan', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('SNMP Scanner', `Scan failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'SNMP scan failed', message: error.message });
+    res.status(500).json({ error: 'SNMP scan failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1743,7 +1748,7 @@ router.post('/waf-detect', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('WAF Detector', `Detection failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'WAF detection failed', message: error.message });
+    res.status(500).json({ error: 'WAF detection failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1759,7 +1764,7 @@ router.post('/host-discovery', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Host Discovery', `Scan failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Host discovery failed', message: error.message });
+    res.status(500).json({ error: 'Host discovery failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1777,7 +1782,7 @@ router.post('/hash-generate', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Hash Generator', `Generation failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Hash generation failed', message: error.message });
+    res.status(500).json({ error: 'Hash generation failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1793,7 +1798,7 @@ router.post('/open-redirect', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Open Redirect Finder', `Test failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Open redirect test failed', message: error.message });
+    res.status(500).json({ error: 'Open redirect test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1810,7 +1815,7 @@ router.post('/web-crawl', crawlLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Web Crawler', `Crawl failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Web crawl failed', message: error.message });
+    res.status(500).json({ error: 'Web crawl failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1826,7 +1831,7 @@ router.post('/banner-grab', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Banner Grabber', `Grab failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Banner grab failed', message: error.message });
+    res.status(500).json({ error: 'Banner grab failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1841,7 +1846,7 @@ router.post('/log-analyze', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Log Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Log analysis failed', message: error.message });
+    res.status(500).json({ error: 'Log analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1855,7 +1860,7 @@ router.post('/pdf-forensics', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('PDF Forensics', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'PDF forensics failed', message: error.message });
+    res.status(500).json({ error: 'PDF forensics failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1869,7 +1874,7 @@ router.post('/binary-analyze', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Binary Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Binary analysis failed', message: error.message });
+    res.status(500).json({ error: 'Binary analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1884,7 +1889,7 @@ router.post('/phishing-check', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Phishing URL Detector', `Check failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Phishing check failed', message: error.message });
+    res.status(500).json({ error: 'Phishing check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1900,7 +1905,7 @@ router.post('/http-request', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('HTTP Request Builder', `Request failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'HTTP request failed', message: error.message });
+    res.status(500).json({ error: 'HTTP request failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1914,7 +1919,7 @@ router.post('/apk-analyze', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('APK Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'APK analysis failed', message: error.message });
+    res.status(500).json({ error: 'APK analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1936,7 +1941,7 @@ router.post('/wifi-crack', wifiLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('WiFi Cracker', `Crack failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'WiFi crack failed', message: error.message });
+    res.status(500).json({ error: 'WiFi crack failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1951,7 +1956,7 @@ router.post('/azure-blob-find', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Azure Blob Finder', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Azure blob search failed', message: error.message });
+    res.status(500).json({ error: 'Azure blob search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1966,7 +1971,7 @@ router.post('/gcp-bucket-find', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('GCP Bucket Finder', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'GCP bucket search failed', message: error.message });
+    res.status(500).json({ error: 'GCP bucket search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1981,7 +1986,7 @@ router.post('/rop-gadgets', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('ROP Gadget Finder', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'ROP gadget search failed', message: error.message });
+    res.status(500).json({ error: 'ROP gadget search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -1996,7 +2001,7 @@ router.post('/dark-web-check', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Dark Web Checker', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Dark web check failed', message: error.message });
+    res.status(500).json({ error: 'Dark web check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2010,7 +2015,7 @@ router.post('/disk-analyze', upload.single('file'), async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Disk Image Analyzer', `Analysis failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Disk analysis failed', message: error.message });
+    res.status(500).json({ error: 'Disk analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2025,7 +2030,7 @@ router.post('/company-osint', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Company OSINT', `OSINT failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Company OSINT failed', message: error.message });
+    res.status(500).json({ error: 'Company OSINT failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2041,7 +2046,7 @@ router.post('/aws-metadata', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('AWS Metadata Tester', `Test failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'AWS metadata test failed', message: error.message });
+    res.status(500).json({ error: 'AWS metadata test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2057,7 +2062,7 @@ router.post('/iam-audit', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Cloud IAM Auditor', `Audit failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'IAM audit failed', message: error.message });
+    res.status(500).json({ error: 'IAM audit failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2072,7 +2077,7 @@ router.post('/cloud-assets', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Cloud Asset Enumerator', `Enumeration failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Cloud asset enumeration failed', message: error.message });
+    res.status(500).json({ error: 'Cloud asset enumeration failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2087,7 +2092,7 @@ router.post('/social-osint', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Social Media OSINT', `OSINT failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Social OSINT failed', message: error.message });
+    res.status(500).json({ error: 'Social OSINT failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2102,7 +2107,7 @@ router.post('/pastebin-search', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Pastebin Monitor', `Search failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Pastebin search failed', message: error.message });
+    res.status(500).json({ error: 'Pastebin search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2121,7 +2126,7 @@ router.post('/credential-check', credLimiter, async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToolActivity('Credential Checker', `Check failed: ${error.message}`, 'warning');
-    res.status(500).json({ error: 'Credential check failed', message: error.message });
+    res.status(500).json({ error: 'Credential check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2139,7 +2144,7 @@ router.post('/robots-analyze', async (req, res) => {
     logToolActivity('Robots.txt Analyzer', `Done — ${result.interestingPaths.length} interesting paths`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Robots.txt analysis failed', message: error.message });
+    res.status(500).json({ error: 'Robots.txt analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2153,7 +2158,7 @@ router.post('/snmp-scan', async (req, res) => {
     const result = await performSNMPScan(target, community, version, safeTimeout);
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'SNMP scan failed', message: error.message });
+    res.status(500).json({ error: 'SNMP scan failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2169,7 +2174,7 @@ router.post('/waf-detect', async (req, res) => {
     logToolActivity('WAF Detector', `Done — WAF detected: ${result.wafDetected}`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'WAF detection failed', message: error.message });
+    res.status(500).json({ error: 'WAF detection failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2185,7 +2190,7 @@ router.post('/host-discovery', async (req, res) => {
     logToolActivity('Host Discovery', `Found ${result.hostsUp} hosts`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Host discovery failed', message: error.message });
+    res.status(500).json({ error: 'Host discovery failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2199,7 +2204,7 @@ router.post('/hash-generate', async (req, res) => {
     const result = await generateHash(input, algorithm, rounds, verify);
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Hash generation failed', message: error.message });
+    res.status(500).json({ error: 'Hash generation failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2217,7 +2222,7 @@ router.post('/open-redirect', openRedirectLimiter, async (req, res) => {
     logToolActivity('Open Redirect Finder', `Done — vulnerable: ${result.vulnerable}`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Open redirect test failed', message: error.message });
+    res.status(500).json({ error: 'Open redirect test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2235,7 +2240,7 @@ router.post('/web-crawl', async (req, res) => {
     logToolActivity('Web Crawler', `Crawled ${result.totalPages} pages`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Web crawl failed', message: error.message });
+    res.status(500).json({ error: 'Web crawl failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2251,7 +2256,7 @@ router.post('/banner-grab', async (req, res) => {
     logToolActivity('Banner Grabber', `Done — ${result.results.filter((r: any) => r.open).length} open ports`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Banner grab failed', message: error.message });
+    res.status(500).json({ error: 'Banner grab failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2265,7 +2270,7 @@ router.post('/log-analyze', upload.single('file'), async (req, res) => {
     logToolActivity('Log Analyzer', `Analysis complete — ${result.anomalies.length} anomalies`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Log analysis failed', message: error.message });
+    res.status(500).json({ error: 'Log analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2278,7 +2283,7 @@ router.post('/pdf-forensics', upload.single('file'), async (req, res) => {
     logToolActivity('PDF Forensics', `Analysis complete — ${result.suspiciousFeatures.length} suspicious features`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'PDF forensics failed', message: error.message });
+    res.status(500).json({ error: 'PDF forensics failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2291,7 +2296,7 @@ router.post('/binary-analyze', upload.single('file'), async (req, res) => {
     logToolActivity('Binary Analyzer', `Analysis complete — format: ${result.format}`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Binary analysis failed', message: error.message });
+    res.status(500).json({ error: 'Binary analysis failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2305,7 +2310,7 @@ router.post('/phishing-check', async (req, res) => {
     logToolActivity('Phishing Detector', `Verdict: ${result.verdict} (score ${result.score})`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Phishing check failed', message: error.message });
+    res.status(500).json({ error: 'Phishing check failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2322,7 +2327,7 @@ router.post('/http-request', httpRequestLimiter, async (req, res) => {
     logToolActivity('HTTP Request Builder', `Response: ${result.statusCode} in ${result.responseTime}ms`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'HTTP request failed', message: error.message });
+    res.status(500).json({ error: 'HTTP request failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2337,7 +2342,7 @@ router.post('/company-osint', osintLimiter, async (req, res) => {
     logToolActivity('Company OSINT', `Intel gathered`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Company OSINT failed', message: error.message });
+    res.status(500).json({ error: 'Company OSINT failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2355,7 +2360,7 @@ router.post('/aws-metadata', awsMetaLimiter, async (req, res) => {
     logToolActivity('AWS Metadata Tester', `Done — vulnerable: ${result.vulnerable}`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'AWS metadata test failed', message: error.message });
+    res.status(500).json({ error: 'AWS metadata test failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2369,7 +2374,7 @@ router.post('/iam-audit', async (req, res) => {
     logToolActivity('IAM Auditor', `Audit complete — ${result.issues.length} issues, score: ${result.score}`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'IAM audit failed', message: error.message });
+    res.status(500).json({ error: 'IAM audit failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2384,7 +2389,7 @@ router.post('/cloud-assets', cloudAssetLimiter, async (req, res) => {
     logToolActivity('Cloud Asset Enumerator', `Found ${result.assets.filter((a: any) => a.status === 'public').length} public assets`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Cloud asset enumeration failed', message: error.message });
+    res.status(500).json({ error: 'Cloud asset enumeration failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2399,7 +2404,7 @@ router.post('/social-osint', socialLimiter, async (req, res) => {
     logToolActivity('Social Media OSINT', `Found ${result.profiles.filter((p: any) => p.found).length} profiles`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Social media OSINT failed', message: error.message });
+    res.status(500).json({ error: 'Social media OSINT failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2414,7 +2419,7 @@ router.post('/pastebin-search', pastebinLimiter, async (req, res) => {
     logToolActivity('Pastebin Monitor', `Found ${result.total} results`, 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Pastebin search failed', message: error.message });
+    res.status(500).json({ error: 'Pastebin search failed', message: clientErrorMessage(error) });
   }
 });
 
@@ -2433,7 +2438,7 @@ router.post('/credential-check', credLimiter, async (req, res) => {
     logToolActivity('Credential Checker', `Done — ${result.found} valid credentials`, result.found > 0 ? 'warning' : 'success');
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: 'Credential check failed', message: error.message });
+    res.status(500).json({ error: 'Credential check failed', message: clientErrorMessage(error) });
   }
 });
 */

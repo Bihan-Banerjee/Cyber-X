@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface SecurityHeaderCheck {
   name: string;
@@ -133,6 +134,7 @@ export async function analyzeHTTPHeaders(
 ): Promise<HeaderAnalysisResult> {
   const start = performance.now();
   logToolActivity('HTTP Header Analyzer', `Fetching headers for ${url}`, 'info');
+  assertUrlAllowed(url);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
