@@ -41,11 +41,25 @@ const SourceBadge = ({ source }: { source: RLSource }) => (
   </span>
 );
 
+// A/B sweep aggregate written by run_sweep.py --compare (arms = e.g. pfsp vs
+// uniform). def_gap is the defender's exploitability gap — LOWER is better.
+interface SweepStat {
+  mean: number | null; iqm?: number | null; std?: number | null;
+  ci95?: { lo: number | null; hi: number | null };
+}
+interface SweepArmAgg {
+  tag: string; n_runs?: number;
+  def_win_rate?: SweepStat; att_win_rate?: SweepStat;
+  def_gap?: SweepStat; nashconv?: SweepStat;
+}
+interface SweepComparison { arms: SweepArmAgg[]; illustrative?: boolean; }
+
 const RLArena = () => {
   const [history, setHistory] = useState<MetricsHistory | null>(null);
   const [exploit, setExploit] = useState<ExploitabilityReport | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
   const [shadow, setShadow] = useState<ShadowEvalReport | null>(null);
+  const [sweep, setSweep] = useState<SweepComparison | null>(null);
   const [source, setSource] = useState<RLSource>("replay");
 
   useEffect(() => {
@@ -70,6 +84,11 @@ const RLArena = () => {
         const s = await fetchRL<ShadowEvalReport>(
           "/api/rl/shadow_eval", "shadow_eval.json");
         setShadow(s.data);
+      } catch { /* leave empty */ }
+      try {
+        const sw = await fetchRL<SweepComparison>(
+          "/api/rl/sweep_comparison", "sweep_comparison.json");
+        setSweep(sw.data);
       } catch { /* leave empty */ }
     })();
   }, []);
@@ -126,6 +145,13 @@ const RLArena = () => {
           <Empty msg="No exploitability report available." />
         )}
       </CyberpunkCard>
+
+      {/* PFSP vs uniform — the headline before/after */}
+      {sweep && sweep.arms && sweep.arms.length >= 2 && (
+        <CyberpunkCard title="PFSP vs UNIFORM — DEFENDER EXPLOITABILITY (BEFORE / AFTER)">
+          <SweepComparisonPanel sweep={sweep} />
+        </CyberpunkCard>
+      )}
 
       {/* Shadow-mode evaluation (Phase D) */}
       <CyberpunkCard title="SHADOW-MODE EVALUATION">
@@ -631,5 +657,64 @@ function chartOpts(title: string) {
     },
   };
 }
+
+const fmtStat = (s?: SweepStat) => {
+  if (!s || s.mean == null) return "—";
+  const std = s.std != null ? ` ± ${s.std.toFixed(2)}` : "";
+  const iqm = s.iqm != null ? ` · IQM ${s.iqm.toFixed(2)}` : "";
+  const ci = s.ci95 && s.ci95.lo != null && s.ci95.hi != null
+    ? ` · CI [${s.ci95.lo.toFixed(2)}, ${s.ci95.hi.toFixed(2)}]` : "";
+  return `${s.mean.toFixed(2)}${std}${iqm}${ci}`;
+};
+
+const SweepComparisonPanel = ({ sweep }: { sweep: SweepComparison }) => {
+  const byTag = (t: string) => sweep.arms.find((a) => a.tag.toLowerCase().includes(t));
+  const pfsp = byTag("pfsp") || sweep.arms[0];
+  const uniform = byTag("uniform") || sweep.arms[1];
+  const gp = pfsp?.def_gap?.mean ?? null;
+  const gu = uniform?.def_gap?.mean ?? null;
+  const gapDelta = gp != null && gu != null ? gp - gu : null;
+  const rows = [
+    { label: uniform?.tag ?? "uniform", arm: uniform, tone: "text-gray-300" },
+    { label: pfsp?.tag ?? "pfsp", arm: pfsp, tone: "text-fuchsia-300" },
+  ];
+  return (
+    <div className="space-y-4">
+      {sweep.illustrative && (
+        <div className="text-[11px] text-yellow-500/80 border border-yellow-500/30 rounded px-3 py-1.5">
+          Illustrative sample — run both arms, then run_sweep.py --compare pfsp uniform for real numbers.
+        </div>
+      )}
+      <p className="text-xs text-gray-400">
+        Defender exploitability gap (<span className="text-gray-300">def_gap</span> — lower means harder
+        to exploit) and defender win rate: PFSP vs the uniform-league control, with IQM and 95% CIs.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {rows.map((r) => (
+          <div key={r.label} className="glass-panel rounded p-4">
+            <div className={`uppercase tracking-widest text-xs font-bold mb-2 ${r.tone}`}>
+              {r.label}
+              {r.arm?.n_runs ? <span className="text-gray-500 font-normal"> · {r.arm.n_runs} seeds</span> : null}
+            </div>
+            <div className="text-[11px] text-gray-400">Defender exploitability gap</div>
+            <div className="text-xl font-bold text-cyber-cyan">{fmtStat(r.arm?.def_gap)}</div>
+            <div className="text-[11px] text-gray-400 mt-2">Defender win rate</div>
+            <div className="text-sm text-gray-200">{fmtStat(r.arm?.def_win_rate)}</div>
+          </div>
+        ))}
+      </div>
+      {gapDelta != null && (
+        <div className={`text-sm font-bold ${gapDelta < 0 ? "text-fuchsia-300" : "text-gray-400"}`}>
+          PFSP shifts the defender exploitability gap by {gapDelta >= 0 ? "+" : ""}{gapDelta.toFixed(2)}
+          <span className="font-normal text-gray-400">
+            {gapDelta < 0
+              ? " — the defender got harder to exploit (the goal)."
+              : " — no separation yet; check the CIs and add seeds."}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default RLArena;

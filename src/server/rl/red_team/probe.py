@@ -49,7 +49,8 @@ def showcase_episode(attacker, defender_model, seed: int, curriculum_level: int 
     """Run ONE attacker-vs-defender episode and return the labeled step trace
     (what the Red-vs-Blue demo animates)."""
     from shared_honeypot_env import SharedHoneypotEnv, StatefulOpponent
-    opp = StatefulOpponent(defender_model, deterministic=True)
+    # StatefulOpponent takes the model only; determinism is a predict() arg.
+    opp = StatefulOpponent(defender_model)
     env = SharedHoneypotEnv(mode="attacker", opponent_model=opp,
                             curriculum_level=curriculum_level)
     env.reset(seed=seed)

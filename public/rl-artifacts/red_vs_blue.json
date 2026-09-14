@@ -1,0 +1,66 @@
+{
+  "note": "Illustrative Red-vs-Blue replay sample (scripted-fallback attacker vs a trained RL defender) for the hosted site / no-backend mode. Regenerate a REAL recorded episode with: python export_artifacts.py --run <run> --redteam  (add --redteam-llm for an LLM attacker).",
+  "meta": {
+    "attacker_kind": "scripted-fallback",
+    "defender_model": "defender_best.zip"
+  },
+  "steps": [
+    {
+      "type": "step", "episode": 0, "step": 0,
+      "attacker": {"action_name": "passive_recon", "technique_id": "T1592", "technique": "Gather Victim Host Information", "tactic": "Reconnaissance", "reasoning": "Quietly profile the target before touching it — no packets that trip an alert.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 0, "action_name": "monitor"},
+      "stage": 0, "suspicion": 1.2, "evidence": 0.0
+    },
+    {
+      "type": "step", "episode": 0, "step": 1,
+      "attacker": {"action_name": "exploit_service", "technique_id": "T1190", "technique": "Exploit Public-Facing Application", "tactic": "Initial Access", "reasoning": "Turn a known service weakness into a foothold.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 0, "action_name": "monitor"},
+      "stage": 1, "suspicion": 4.8, "evidence": 0.0
+    },
+    {
+      "type": "step", "episode": 0, "step": 2,
+      "attacker": {"action_name": "establish_persistence", "technique_id": "T1098.004", "technique": "SSH Authorized Keys", "tactic": "Persistence", "reasoning": "Plant an authorized_keys entry to survive a containment.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 1, "action_name": "investigate"},
+      "stage": 1, "suspicion": 6.1, "evidence": 2.4
+    },
+    {
+      "type": "step", "episode": 0, "step": 3,
+      "attacker": {"action_name": "escalate_privilege", "technique_id": "T1068", "technique": "Exploitation for Privilege Escalation", "tactic": "Privilege Escalation", "reasoning": "Climb from user to root to unlock the objective.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 4, "action_name": "threat_hunt"},
+      "stage": 2, "suspicion": 9.3, "evidence": 5.0
+    },
+    {
+      "type": "step", "episode": 0, "step": 4,
+      "attacker": {"action_name": "dump_credentials", "technique_id": "T1003", "technique": "OS Credential Dumping", "tactic": "Credential Access", "reasoning": "Harvest stored credentials to enable lateral movement.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 5, "action_name": "isolate_host"},
+      "stage": 1, "suspicion": 7.0, "evidence": 1.0
+    },
+    {
+      "type": "step", "episode": 0, "step": 5,
+      "attacker": {"action_name": "defense_evasion", "technique_id": "T1070", "technique": "Indicator Removal", "tactic": "Defense Evasion", "reasoning": "Clear logs/history to lower the SOC's suspicion.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 1, "action_name": "investigate"},
+      "stage": 1, "suspicion": 3.4, "evidence": 3.2
+    },
+    {
+      "type": "step", "episode": 0, "step": 6,
+      "attacker": {"action_name": "escalate_privilege", "technique_id": "T1068", "technique": "Exploitation for Privilege Escalation", "tactic": "Privilege Escalation", "reasoning": "Climb from user to root to unlock the objective.", "source": "scripted-fallback"},
+      "attacker_success": false,
+      "defender": {"action": 4, "action_name": "threat_hunt"},
+      "stage": 1, "suspicion": 5.9, "evidence": 6.1
+    },
+    {
+      "type": "step", "episode": 0, "step": 7,
+      "attacker": {"action_name": "escalate_privilege", "technique_id": "T1068", "technique": "Exploitation for Privilege Escalation", "tactic": "Privilege Escalation", "reasoning": "Climb from user to root to unlock the objective.", "source": "scripted-fallback"},
+      "attacker_success": true,
+      "defender": {"action": 6, "action_name": "hard_block"},
+      "stage": 0, "suspicion": 2.1, "evidence": 0.0
+    }
+  ],
+  "result": {"type": "result", "episode": 0, "outcome": "defender_win", "steps": 8}
+}

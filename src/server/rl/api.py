@@ -287,6 +287,25 @@ def get_shadow_eval():
     return jsonify(report)
 
 
+@app.route("/api/rl/sweep_comparison", methods=["GET"])
+def get_sweep_comparison():
+    """A/B sweep comparison — {"arms": [aggA, aggB]} written by
+    run_sweep.py --compare --out <results>/sweep_comparison.json (e.g. PFSP vs
+    uniform). 404 when none exists yet → the frontend falls back to the baked
+    artifact, same as every other RL read."""
+    results_root = os.path.abspath(_RESULTS_DIR)
+    report = _read_json(os.path.join(results_root, "sweep_comparison.json"), None)
+    if report is None:
+        matches = glob.glob(
+            os.path.join(results_root, "**", "sweep_comparison.json"),
+            recursive=True)
+        if matches:
+            report = _read_json(max(matches, key=os.path.getmtime), None)
+    if report is None:
+        return jsonify({"error": "no sweep comparison yet"}), 404
+    return jsonify(report)
+
+
 @app.route("/api/rl/health", methods=["GET"])
 def get_health():
     """What this API is actually serving. The dashboards degrade silently when a

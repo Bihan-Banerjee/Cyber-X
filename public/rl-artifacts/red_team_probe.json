@@ -1,0 +1,13 @@
+{
+  "illustrative": true,
+  "_note": "ILLUSTRATIVE SAMPLE showing the out-of-class card's shape. Replaced by real numbers after: python -m red_team.probe --run-dir models/cyberx_marl/results/pfsp_seed1 --episodes 50 --llm --provider ollama --model qwen2.5:3b --out public/rl-artifacts/red_team_probe.json",
+  "attacker_kind": "LLM",
+  "llm": true,
+  "provider": "ollama",
+  "model": "qwen2.5:3b",
+  "episodes": 50,
+  "llm_attacker_win_rate": 0.78,
+  "cotrained_attacker_win_rate": 0.52,
+  "ppo_best_response_win_rate": 0.80,
+  "out_of_class_delta": 0.26
+}
