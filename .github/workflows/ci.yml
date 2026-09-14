@@ -26,6 +26,11 @@ jobs:
       - name: Typecheck (frontend + server)
         run: npx tsc -b
 
+      # Security guards (SSRF, injection-safe args, target validation, error
+      # sanitization) — the "are the doors locked?" checks, hard-gated.
+      - name: Security unit tests
+        run: npm run test:server
+
       # eslint reports ~350 pre-existing errors across the scanners (mostly
       # no-explicit-any). Gating on the whole tree would make CI red on arrival
       # and therefore ignored, so the hard gate covers the RL/dashboard surface

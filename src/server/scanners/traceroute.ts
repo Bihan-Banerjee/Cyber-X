@@ -91,6 +91,26 @@ function parseUnix(output: string): Hop[] {
   return hops;
 }
 
+/**
+ * Build the traceroute command as (bin, argv). Pure + exported so the
+ * injection-safety property — the target is a single argv element, never
+ * interpolated into a shell string — is unit-testable. execFile runs argv
+ * directly with no shell, so metacharacters in `target` cannot inject.
+ */
+export function tracerouteCommand(
+  target: string,
+  maxHops: number = 30,
+  isWindows: boolean = process.platform === 'win32',
+): { bin: string; args: string[] } {
+  // Clamp hop count to a sane bounded integer (defends against NaN / huge values).
+  const safeMaxHops = Math.min(Math.max(1, Math.floor(Number(maxHops) || 30)), 64);
+  const bin = isWindows ? 'tracert' : 'traceroute';
+  const args = isWindows
+    ? ['-h', String(safeMaxHops), '-w', '3000', target]
+    : ['-m', String(safeMaxHops), '-w', '3', target];
+  return { bin, args };
+}
+
 export async function performTraceroute(
   target: string,
   maxHops: number = 30,
@@ -101,12 +121,7 @@ export async function performTraceroute(
   logToolActivity('Traceroute', `Running traceroute to ${target}`, 'info');
 
   const isWindows = process.platform === 'win32';
-  // Clamp hop count to a sane bounded integer (defends against NaN / huge values).
-  const safeMaxHops = Math.min(Math.max(1, Math.floor(Number(maxHops) || 30)), 64);
-  const bin = isWindows ? 'tracert' : 'traceroute';
-  const args = isWindows
-    ? ['-h', String(safeMaxHops), '-w', '3000', target]
-    : ['-m', String(safeMaxHops), '-w', '3', target];
+  const { bin, args } = tracerouteCommand(target, maxHops, isWindows);
 
   try {
     const { stdout, stderr } = await execFileAsync(bin, args, {

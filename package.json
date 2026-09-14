@@ -12,6 +12,7 @@
     "be:start": "tsx src/server/index.ts",
     "be:build": "tsc -b",
     "be:serve": "node dist/server/index.js",
+    "test:server": "tsx --test src/server/security.test.ts",
     "dev": "concurrently \"npm run fe:dev\" \"npm run be:dev\"",
     "build": "npm run fe:build && npm run be:build",
     "start": "npm run be:serve",

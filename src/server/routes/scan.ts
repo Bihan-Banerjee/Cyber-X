@@ -36,6 +36,7 @@ import {
 } from '../scanners/packetCapturer.js';
 import { logToolActivity, getRecentToolActivity } from '../utils/activityLogger.js';
 import { clientErrorMessage } from '../utils/safeError.js';
+import { isValidTarget } from '../utils/validateTarget.js';
 import { getSystemResources } from '../scanners/systemResources.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
 import { performSSLAnalysis } from '../scanners/sslAnalyzer.js';
@@ -128,11 +129,8 @@ const upload = multer({
 });
 
 // Validation helper
-function isValidTarget(target: string): boolean {
-  const hostnameRegex = /^[a-zA-Z0-9.-]+$/;
-  const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-  return hostnameRegex.test(target) || ipRegex.test(target);
-}
+// isValidTarget lives in utils/validateTarget.ts (imported above) so it can be
+// unit-tested without importing this whole router module.
 
 // Port Scanner Route
 router.post('/ports', async (req, res) => {
