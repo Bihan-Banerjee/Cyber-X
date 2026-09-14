@@ -1,6 +1,7 @@
 import express from 'express';
 import honeypotManager from '../honeypot/honeypotManager.js';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { clientErrorMessage } from '../utils/safeError.js';
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ router.get('/status', async (req, res) => {
     console.error('Honeypot status error:', error);
     res.status(500).json({
       error: 'Failed to get honeypot status',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -31,7 +32,7 @@ router.get('/attacks/recent', async (req, res) => {
     console.error('Recent attacks error:', error);
     res.status(500).json({
       error: 'Failed to get recent attacks',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -48,7 +49,7 @@ router.get('/attacks/stats', async (req, res) => {
     console.error('Attack stats error:', error);
     res.status(500).json({
       error: 'Failed to get attack statistics',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -77,7 +78,7 @@ router.post('/start/:type', async (req, res) => {
     console.error('Start honeypot error:', error);
     res.status(500).json({
       error: 'Failed to start honeypot',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });
@@ -106,7 +107,7 @@ router.post('/stop/:type', async (req, res) => {
     console.error('Stop honeypot error:', error);
     res.status(500).json({
       error: 'Failed to stop honeypot',
-      message: error.message,
+      message: clientErrorMessage(error),
     });
   }
 });

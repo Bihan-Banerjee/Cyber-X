@@ -411,7 +411,20 @@ class SharedHoneypotEnv(gym.Env):
         self._ep_att_rewards: list = []
         self._ep_def_rewards: list = []
 
+        # {opponent_id: {wins, losses, draws}} accumulated over training
+        # episodes; drained by the trainer to drive PFSP opponent sampling.
+        self._opponent_record: Dict[str, Dict[str, int]] = {}
+
     # ── Curriculum / opponent hot-swap (callable via VecEnv.env_method) ────────
+
+    def drain_opponent_record(self) -> Dict[str, Dict[str, int]]:
+        """Return and clear the per-opponent win/loss tally.
+
+        Called through `VecEnv.env_method` after each training phase, so each
+        worker reports only the episodes it actually played this iteration.
+        """
+        record, self._opponent_record = self._opponent_record, {}
+        return record
 
     def _apply_curriculum(self, level: int) -> None:
         cfg = CURRICULUM_CONFIG[level]
@@ -1069,6 +1082,21 @@ class SharedHoneypotEnv(gym.Env):
             def_win = (not att_win) and (
                 ts["justified_containments"] >= rw.containments_to_win
             )
+            # Tally this episode against the opponent that played it. PFSP needs
+            # a per-opponent win rate, and this is the only place it can be had
+            # for free — the alternative is re-playing eval matches against every
+            # ghost, which costs more than the training iteration itself.
+            tally = self._opponent_record.setdefault(
+                self._opponent_id, {"wins": 0, "losses": 0, "draws": 0})
+            self_win = att_win if self.mode == "attacker" else def_win
+            opp_win  = def_win if self.mode == "attacker" else att_win
+            if self_win:
+                tally["wins"] += 1
+            elif opp_win:
+                tally["losses"] += 1
+            else:
+                tally["draws"] += 1
+
             info.update({
                 "ep_att_return":         sum(self._ep_att_rewards),
                 "ep_def_return":         sum(self._ep_def_rewards),

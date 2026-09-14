@@ -52,7 +52,15 @@
     "ghost_pool_max": 15,
     "scripted_slots": 3,
     "latest_slots": 2,
-    "_comment": "Per-iteration worker mix at level 2: scripted_slots workers vs scripted/expert, latest_slots vs current opponent, remainder vs ghosts sampled uniformly over full history. scripted_slots raised to 3 so neither side can overfit to a collapsed opponent — both keep facing agents that play the real game."
+    "_comment": "Per-iteration worker mix at level 2: scripted_slots workers vs scripted/expert, latest_slots vs current opponent, remainder vs ghosts sampled over full history. scripted_slots raised to 3 so neither side can overfit to a collapsed opponent — both keep facing agents that play the real game.",
+
+    "pfsp": {
+      "enabled": false,
+      "p": 2.0,
+      "min_games": 5,
+      "_comment": "Prioritized Fictitious Self-Play (AlphaStar). Ghost slots are drawn with weight f_hard(1 - win_rate) = (1 - win_rate)^p instead of uniformly, concentrating training on opponents we actually lose to. Exploitability showed the defender under-responds to the attacker (gap 0.25 vs 0.11), which is exactly the gap this targets. Opponents with fewer than min_games recorded keep the uniform weight so a single unlucky episode cannot dominate sampling.",
+      "_comment_enabled": "Set true to train with PFSP; false reproduces the uniform league for the before/after comparison."
+    }
   },
 
   "llm": {
@@ -82,6 +90,13 @@
   "logging": {
     "tensorboard_dir": "./logs",
     "results_dir": "./models/cyberx_marl/results",
-    "save_plots_every_n_iters": 5
+    "save_plots_every_n_iters": 5,
+
+    "wandb": {
+      "enabled": false,
+      "project": "cyberx-marl",
+      "entity": "",
+      "_comment": "Weights & Biases logging, off by default and a no-op if the package is absent. Needed to compare arms across a multi-seed sweep: per-iteration win rates, Elo, strategy entropy, curriculum level and the PFSP sampling distribution. Install with `pip install wandb` (already listed, commented, in requirements.txt)."
+    }
   }
 }

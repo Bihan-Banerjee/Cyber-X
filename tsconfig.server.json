@@ -15,4 +15,5 @@
     "composite": true
   },
   "include": ["src/server/**/*", "src/server/**/*.d.ts"],
+  "exclude": ["src/server/**/*.test.ts"]
 }

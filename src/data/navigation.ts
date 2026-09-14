@@ -5,6 +5,7 @@ export const navigationItems = [
   { name: "Tools", path: "/tools" },
   { name: "Honeypots", path: "/honeypots" },
   { name: "RL Arena", path: "/rl-arena" },
+  { name: "Red vs Blue", path: "/red-vs-blue" },
   { name: "Map Layers", path: "/world-map" },
   { name: "Guide", path: "/guide" },
 ];

@@ -18,11 +18,20 @@ Outputs (under public/rl-artifacts/):
     exploitability.json    – aggregated NashConv / best-response summary
     leaderboard.json        – Elo leaderboard ({leaderboard: [{agent, elo}]})
     training_curves.png    – the 6-panel results figure
-    manifest.json          – provenance + generation timestamp
+    demo_episode.json      – recorded best-vs-best episode      (--demo / --all)
+    shadow_eval.json       – shadow-mode evaluation report      (--shadow / --all)
+    copilot_sample.json    – recorded Copilot suggestions       (--shadow / --all)
+    manifest.json          – provenance, timestamp, sha256 per file
+
+`--all` regenerates everything. Partial regeneration is how the committed set
+drifted: shadow_eval.json and copilot_sample.json were produced by hand or by a
+separate script and appeared in no manifest, so nothing could tell which run
+they came from.
 """
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -142,6 +151,93 @@ def record_demo(run_dir: str, n_episodes: int = 1) -> dict:
                     "(no live backend needed).", "events": events}
 
 
+def record_shadow_eval(run_dir: str, n_events: int = 400) -> dict:
+    """Run the shadow-mode evaluation and return the report, including the
+    frozen-state baseline so the before/after stays auditable in one file."""
+    import shadow_eval  # noqa: PLC0415
+    from soc_state import SocState  # noqa: PLC0415
+    from telemetry_adapter import DefenderAdvisor, TelemetryAdapter  # noqa: PLC0415
+
+    model_path = os.path.join(run_dir, "defender_best.zip")
+    advisor = DefenderAdvisor(model_path)
+    adapter = TelemetryAdapter()
+    events  = shadow_eval._synthetic_events(n_events)
+
+    result = shadow_eval.evaluate(
+        events, advisor, adapter, SocState(),
+        window_size=20, episode_windows=7, frozen_state=False)
+    baseline = shadow_eval.evaluate(
+        events, advisor, adapter, SocState(),
+        window_size=20, episode_windows=10 ** 9, frozen_state=True)
+    baseline.pop("rows", None)
+    baseline["note"] = ("Original harness: SOC posture frozen at zero and one "
+                        "unbroken LSTM rollout over every window.")
+
+    return {
+        "model": model_path,
+        "n_events": len(events),
+        "window_size": 20,
+        "synthetic": True,
+        "note": ("Shadow-mode eval: trained-in-sim defender over honeypot "
+                 "telemetry vs a documented analyst heuristic (proxy ground "
+                 "truth). Controlled evaluation, not a deployment claim."),
+        **result,
+        "frozen_baseline": baseline,
+    }
+
+
+def record_copilot_sample(run_dir: str, n_events: int = 400) -> dict:
+    """Record real Defender Copilot suggestions for the replay fallback.
+
+    The previous sample was hand-authored: the summary/action pairs were
+    plausible but never came from the policy, so the hosted site's "trained RL
+    defender" card was showing invented output. These are the model's actual
+    responses, produced through the same SocState loop the live SSE uses.
+    """
+    import shadow_eval  # noqa: PLC0415
+    from soc_state import SocState  # noqa: PLC0415
+    from telemetry_adapter import DefenderAdvisor, TelemetryAdapter  # noqa: PLC0415
+
+    advisor = DefenderAdvisor(os.path.join(run_dir, "defender_best.zip"))
+    adapter = TelemetryAdapter()
+    soc     = SocState()
+    events  = shadow_eval._synthetic_events(n_events)
+
+    suggestions = []
+    for i, start in enumerate(range(0, len(events), 20)):
+        summary = adapter.summarize(events[start:start + 20])
+        soc.decay()
+        obs = adapter.build_observation(
+            defense_state=soc.as_defense_state(), step_fraction=0.5,
+            summary=summary)
+        result  = advisor.suggest(obs)
+        outcome = soc.advance(result["action"], summary)
+        suggestions.append({
+            "type": "suggestion",
+            "events_summary": summary,
+            "action":         result["action"],
+            "action_name":    result["action_name"],
+            "soc_state":      soc.as_defense_state(),
+            "outcome":        outcome,
+        })
+
+    # Keep a spread of distinct actions so the cycling card isn't monotonous.
+    seen, picked = set(), []
+    for s in suggestions:
+        if s["action_name"] not in seen:
+            seen.add(s["action_name"])
+            picked.append(s)
+    picked += [s for s in suggestions if s not in picked][:max(0, 6 - len(picked))]
+
+    return {
+        "note": ("Recorded Defender Copilot suggestions — real outputs of the "
+                 "trained defender over synthetic honeypot telemetry, replayed "
+                 "when no live Flask/ES stack is present. Cycled client-side."),
+        "source_model": os.path.join(run_dir, "defender_best.zip"),
+        "suggestions": picked,
+    }
+
+
 def leaderboard_from(run_dir: str) -> dict:
     elo_path = os.path.join(run_dir, "elo_ratings.json")
     if not os.path.exists(elo_path):
@@ -160,7 +256,15 @@ def main() -> None:
     parser.add_argument(
         "--demo", action="store_true",
         help="also record a best-vs-best demo episode (loads torch; slower)")
+    parser.add_argument(
+        "--shadow", action="store_true",
+        help="also record the shadow evaluation + Copilot sample (loads torch)")
+    parser.add_argument(
+        "--all", action="store_true",
+        help="regenerate every artifact (implies --demo --shadow)")
     args = parser.parse_args()
+    if args.all:
+        args.demo = args.shadow = True
 
     run_dir = os.path.join(_RESULTS_DIR, args.run)
     if not os.path.isdir(run_dir):
@@ -198,21 +302,55 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"  (demo recording skipped: {exc})")
 
-    # 6. manifest / provenance
+    # 6. optional shadow evaluation + recorded Copilot suggestions
+    shadow = None
+    if args.shadow:
+        try:
+            shadow = record_shadow_eval(run_dir)
+            with open(os.path.join(_PUBLIC_DIR, "shadow_eval.json"), "w") as f:
+                json.dump(shadow, f, indent=2)
+            with open(os.path.join(_PUBLIC_DIR, "copilot_sample.json"), "w") as f:
+                json.dump(record_copilot_sample(run_dir), f, indent=2)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  (shadow recording skipped: {exc})")
+
+    # 7. manifest / provenance — checksum every file so a stale or hand-edited
+    #    artifact is detectable instead of silently shipping.
+    files = {}
+    for name in sorted(os.listdir(_PUBLIC_DIR)):
+        if name == "manifest.json":
+            continue
+        path = os.path.join(_PUBLIC_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        files[name] = {"sha256": digest, "bytes": os.path.getsize(path)}
+
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_run":   args.run,
         "n_iterations": len(history.get("iterations", [])),
         "nashconv":     exploit["nashconv"],
+        "regenerated":  {"demo": bool(args.demo), "shadow": bool(args.shadow)},
+        "files":        files,
         "note": ("Baked snapshot of a real CyberX MARL run for the hosted "
-                 "site / replay mode. Regenerate with export_artifacts.py."),
+                 "site / replay mode. Regenerate with "
+                 "`export_artifacts.py --all`."),
     }
+    if shadow:
+        manifest["shadow_eval"] = {
+            "distinct_actions":    shadow["distinct_actions"],
+            "action_entropy_bits": shadow["action_entropy_bits"],
+            "exact_agreement":     shadow["exact_agreement"],
+            "constant_policy":     shadow["constant_policy"],
+        }
     with open(os.path.join(_PUBLIC_DIR, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
 
     print(f"Wrote artifacts to {_PUBLIC_DIR}")
-    for name in sorted(os.listdir(_PUBLIC_DIR)):
-        print("  -", name)
+    for name, meta in files.items():
+        print(f"  - {name:24s} {meta['bytes']:>9,} B  {meta['sha256'][:12]}")
 
 
 if __name__ == "__main__":

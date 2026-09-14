@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface WAFResult {
   url: string;
@@ -115,6 +116,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<{ statu
 export async function detectWAF(url: string, timeoutMs: number = 10000): Promise<WAFResult> {
   const start = performance.now();
   logToolActivity('WAF Detector', `Detecting WAF for ${url}`, 'info');
+  assertUrlAllowed(url);
 
   const normalRes = await fetchWithTimeout(url, timeoutMs);
   const maliciousUrl = url + MALICIOUS_PAYLOADS[0];

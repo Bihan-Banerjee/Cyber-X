@@ -1,29 +1,175 @@
 {
-  "note": "Static replay sample for the Defender Copilot when no live Flask/ES stack is present (hosted site). Represents typical trained-defender responses to honeypot telemetry. Cycled client-side.",
+  "note": "Recorded Defender Copilot suggestions \u2014 real outputs of the trained defender over synthetic honeypot telemetry, replayed when no live Flask/ES stack is present. Cycled client-side.",
+  "source_model": "D:\\EXTRA\\Cyber-X\\src\\server\\rl\\models\\cyberx_marl\\results\\run_four_a\\defender_best.zip",
   "suggestions": [
     {
       "type": "suggestion",
-      "events_summary": { "failed_logins": 27, "suspicious_commands": 4, "port_scan": 1, "priv_esc_attempts": 2, "downloads": 1, "n_sessions": 3, "n_src_ips": 2 },
+      "events_summary": {
+        "failed_logins": 0,
+        "suspicious_commands": 0,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
       "action": 4,
-      "action_name": "threat_hunt"
+      "action_name": "threat_hunt",
+      "soc_state": {
+        "evidence": 2.5,
+        "alerts": 0,
+        "decoys_deployed": 0,
+        "decoy_tripped": false,
+        "containment_active": false,
+        "rate_limited": false
+      },
+      "outcome": {
+        "action": 4,
+        "effect": "hunt_hit",
+        "evidence_gain": 2.5,
+        "evidence": 2.5
+      }
     },
     {
       "type": "suggestion",
-      "events_summary": { "failed_logins": 61, "suspicious_commands": 1, "port_scan": 1, "priv_esc_attempts": 0, "downloads": 0, "n_sessions": 5, "n_src_ips": 4 },
-      "action": 2,
-      "action_name": "rate_limit"
+      "events_summary": {
+        "failed_logins": 13,
+        "suspicious_commands": 5,
+        "port_scan": 0,
+        "priv_esc_attempts": 3,
+        "downloads": 2,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "action": 10,
+      "action_name": "raise_alert",
+      "soc_state": {
+        "evidence": 5.704,
+        "alerts": 1,
+        "decoys_deployed": 0,
+        "decoy_tripped": false,
+        "containment_active": false,
+        "rate_limited": false
+      },
+      "outcome": {
+        "action": 10,
+        "effect": "escalated",
+        "evidence_gain": 1.0,
+        "evidence": 5.704
+      }
     },
     {
       "type": "suggestion",
-      "events_summary": { "failed_logins": 8, "suspicious_commands": 9, "port_scan": 0, "priv_esc_attempts": 5, "downloads": 3, "n_sessions": 2, "n_src_ips": 1 },
+      "events_summary": {
+        "failed_logins": 4,
+        "suspicious_commands": 0,
+        "port_scan": 0,
+        "priv_esc_attempts": 0,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 2
+      },
       "action": 5,
-      "action_name": "isolate_host"
+      "action_name": "isolate_host",
+      "soc_state": {
+        "evidence": 0.0,
+        "alerts": 2,
+        "decoys_deployed": 0,
+        "decoy_tripped": false,
+        "containment_active": true,
+        "rate_limited": false
+      },
+      "outcome": {
+        "action": 5,
+        "effect": "contained",
+        "evidence_gain": 0.0,
+        "containments": 1,
+        "evidence": 0.0
+      }
     },
     {
       "type": "suggestion",
-      "events_summary": { "failed_logins": 3, "suspicious_commands": 12, "port_scan": 1, "priv_esc_attempts": 6, "downloads": 5, "n_sessions": 1, "n_src_ips": 1 },
-      "action": 6,
-      "action_name": "hard_block"
+      "events_summary": {
+        "failed_logins": 15,
+        "suspicious_commands": 0,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "action": 4,
+      "action_name": "threat_hunt",
+      "soc_state": {
+        "evidence": 4.9,
+        "alerts": 0,
+        "decoys_deployed": 0,
+        "decoy_tripped": false,
+        "containment_active": false,
+        "rate_limited": false
+      },
+      "outcome": {
+        "action": 4,
+        "effect": "hunt_hit",
+        "evidence_gain": 2.5,
+        "evidence": 4.9
+      }
+    },
+    {
+      "type": "suggestion",
+      "events_summary": {
+        "failed_logins": 4,
+        "suspicious_commands": 9,
+        "port_scan": 0,
+        "priv_esc_attempts": 4,
+        "downloads": 4,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "action": 10,
+      "action_name": "raise_alert",
+      "soc_state": {
+        "evidence": 6.47584,
+        "alerts": 2,
+        "decoys_deployed": 0,
+        "decoy_tripped": false,
+        "containment_active": false,
+        "rate_limited": false
+      },
+      "outcome": {
+        "action": 10,
+        "effect": "escalated",
+        "evidence_gain": 1.0,
+        "evidence": 6.476
+      }
+    },
+    {
+      "type": "suggestion",
+      "events_summary": {
+        "failed_logins": 0,
+        "suspicious_commands": 0,
+        "port_scan": 1,
+        "priv_esc_attempts": 0,
+        "downloads": 0,
+        "n_sessions": 20,
+        "n_src_ips": 5
+      },
+      "action": 4,
+      "action_name": "threat_hunt",
+      "soc_state": {
+        "evidence": 2.5,
+        "alerts": 2,
+        "decoys_deployed": 0,
+        "decoy_tripped": false,
+        "containment_active": false,
+        "rate_limited": false
+      },
+      "outcome": {
+        "action": 4,
+        "effect": "hunt_hit",
+        "evidence_gain": 2.5,
+        "evidence": 2.5
+      }
     }
   ]
 }

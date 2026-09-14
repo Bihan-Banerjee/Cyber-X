@@ -103,3 +103,28 @@ export interface LeaderboardEntry {
   agent: string;
   elo: number;
 }
+
+/** One arm of the shadow evaluation (see src/server/rl/shadow_eval.py). */
+export interface ShadowArm {
+  n_windows: number;
+  action_distribution: Record<string, number>;
+  distinct_actions: number;
+  action_entropy_bits: number;
+  /** True when the policy emitted one action for every window — the agreement
+   *  scores are then meaningless and the UI must say so. */
+  constant_policy: boolean;
+  exact_agreement: number;
+  reasonable_agreement: number;
+  containments: number;
+  confusion_by_situation?: Record<string, Record<string, number>>;
+}
+
+export interface ShadowEvalReport extends ShadowArm {
+  model: string;
+  n_events: number;
+  window_size: number;
+  synthetic: boolean;
+  note?: string;
+  /** The original frozen-posture harness, kept for the before/after. */
+  frozen_baseline?: ShadowArm;
+}

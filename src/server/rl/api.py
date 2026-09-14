@@ -27,6 +27,15 @@ Endpoints:
   GET  /api/rl/metrics/history     – full training_history.json (chart arrays)
   GET  /api/rl/exploitability      – aggregated NashConv / best-response report
   GET  /api/rl/plots/<name>        – serve a results PNG (training_curves, …)
+  GET  /api/rl/shadow_eval         – shadow-mode evaluation report
+  GET  /api/rl/health              – which run dir / models this API is serving
+
+Run-directory resolution
+------------------------
+Results are not always at the save-dir root: a finished run is usually archived
+into `models/cyberx_marl/results/<run_name>/`. Every read goes through
+`_resolve_run_dir()` / `_run_file()` so the endpoints keep working after a run is
+archived. Set `RL_RUN_DIR` to pin a specific run.
 """
 
 import glob
@@ -34,7 +43,10 @@ import json
 import logging
 import os
 import queue
+import signal
 import statistics
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -53,7 +65,7 @@ CORS(app)
 logger = logging.getLogger(__name__)
 
 # ── Global state ───────────────────────────────────────────────────────────────
-_trainer         = None
+_training_proc: Optional[subprocess.Popen] = None
 _training_thread: Optional[threading.Thread] = None
 _is_training     = False
 _stop_flag       = threading.Event()
@@ -64,11 +76,16 @@ _demo_thread: Optional[threading.Thread] = None
 _demo_running    = False
 _demo_queue: queue.Queue = queue.Queue(maxsize=2000)
 
-_advisor         = None   # cached DefenderAdvisor (telemetry shadow mode)
+_advisor         = None   # cached DefenderAdvisor for /telemetry/suggest
 _advisor_path    = None
+_advisor_lock    = threading.Lock()   # its LSTM state is not concurrency-safe
 
 _SAVE_DIR        = "./models/cyberx_marl"
 _RESULTS_DIR     = os.path.join(_SAVE_DIR, "results")
+
+_SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT       = os.path.abspath(os.path.join(_SCRIPT_DIR, "..", "..", ".."))
+_ARTIFACTS_DIR   = os.path.join(_REPO_ROOT, "public", "rl-artifacts")
 
 
 # ── Log handler that pushes to the SSE queue ──────────────────────────────────
@@ -95,10 +112,15 @@ logging.getLogger().addHandler(QueueLogHandler())
 @app.route("/api/rl/status", methods=["GET"])
 def get_status():
     history = _load_history()
+    levels  = history.get("curriculum_levels") or [0]
     return jsonify({
         "is_training":      _is_training,
-        "has_models":       _trainer is not None,
-        "curriculum_level": _trainer._curr_level if _trainer else 0,
+        # Training runs out of process now, so report what is on disk rather
+        # than what happens to be loaded in this Flask worker.
+        "has_models":       any(m["exists"] for m in (
+                                {"exists": bool(_model_path(r))} for r in
+                                ("attacker", "defender"))),
+        "curriculum_level": levels[-1],
         "iterations_done":  len(history.get("iterations", [])),
         "latest_metrics":   _latest_metrics(),
         "demo_running":     _demo_running,
@@ -107,7 +129,7 @@ def get_status():
 
 @app.route("/api/rl/train/start", methods=["POST"])
 def start_training():
-    global _trainer, _training_thread, _is_training, _stop_flag
+    global _training_thread, _is_training, _stop_flag
 
     if _is_training:
         return jsonify({"error": "Training already in progress"}), 409
@@ -121,30 +143,63 @@ def start_training():
     save_dir           = data.get("save_dir", "./models/cyberx_marl")
     seed               = data.get("seed")
 
-    llm_cfg = _config.get_llm_config()
     _stop_flag.clear()
 
+    # Run training as a `run_training.py` subprocess rather than in a thread in
+    # this process. The in-process path skipped the crash-restart supervisor AND
+    # its `taskkill /T` worker-tree cleanup, so a cuDNN/driver fault — which is
+    # exactly what the supervisor exists for on a laptop GPU — orphaned the
+    # n_envs×2 worker processes and leaked ~0.5 GB each until the box OOM'd.
+    cmd = [
+        sys.executable, os.path.join(_SCRIPT_DIR, "run_training.py"),
+        "--iterations", str(n_iterations),
+        "--timesteps", str(timesteps_per_iter),
+        "--eval-episodes", str(eval_episodes),
+        "--save-dir", save_dir,
+    ]
+    if seed is not None:
+        cmd += ["--seed", str(seed)]
+    if not run_bc:
+        cmd += ["--no-bc"]
+    if run_llm:
+        cmd += ["--llm-oracle"]
+    if data.get("pfsp") is True:
+        cmd += ["--pfsp"]
+    elif data.get("pfsp") is False:
+        cmd += ["--no-pfsp"]
+    for ablation in data.get("ablate", []) or []:
+        cmd += ["--ablate", str(ablation)]
+
     def _train():
-        global _trainer, _is_training
+        global _training_proc, _is_training
         _is_training = True
         try:
-            from trainer import MARLTrainer
-            _trainer = MARLTrainer(
-                save_dir   = save_dir,
-                llm_config = llm_cfg,
-                seed       = seed,
-            )
-            _trainer.train(
-                n_iterations         = n_iterations,
-                timesteps_per_iter   = timesteps_per_iter,
-                eval_episodes        = eval_episodes,
-                run_bc_phase         = run_bc,
-                run_llm_oracle_phase = run_llm,
-            )
-        except Exception as exc:
+            proc = subprocess.Popen(
+                cmd, cwd=_SCRIPT_DIR, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                errors="replace", bufsize=1,
+                # Its own process group, so /train/stop can deliver
+                # CTRL_BREAK_EVENT to the child without also interrupting Flask.
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP
+                               if os.name == "nt" else 0))
+            _training_proc = proc
+            for line in proc.stdout:                    # feed /logs/stream
+                line = line.rstrip()
+                if not line:
+                    continue
+                try:
+                    _log_queue.put_nowait({
+                        "time": datetime.utcnow().isoformat(),
+                        "level": "INFO", "msg": line})
+                except queue.Full:
+                    pass
+            proc.wait()
+            logger.info("Training subprocess exited with %s", proc.returncode)
+        except Exception as exc:  # noqa: BLE001
             logger.error("Training failed: %s", exc, exc_info=True)
         finally:
             _is_training = False
+            _training_proc = None
 
     _training_thread = threading.Thread(target=_train, daemon=True)
     _training_thread.start()
@@ -153,16 +208,35 @@ def start_training():
         "message":    "Training started",
         "iterations": n_iterations,
         "timesteps":  timesteps_per_iter,
+        "save_dir":   save_dir,
+        "command":    " ".join(cmd),
     })
 
 
 @app.route("/api/rl/train/stop", methods=["POST"])
 def stop_training():
-    global _is_training
+    """Ask the training subprocess to pause cleanly.
+
+    run_training.py saves full state after every iteration and treats SIGINT as
+    'finish this iteration, then save', so CTRL_BREAK is a graceful stop, not a
+    kill — the run resumes with `--resume`.
+    """
     _stop_flag.set()
-    if _trainer is not None:
-        _trainer._pause_requested = True   # finish current iteration, then save
-    return jsonify({"message": "Stop signal sent. Training will finish current iteration."})
+    proc = _training_proc
+    if proc is None or proc.poll() is not None:
+        return jsonify({"message": "No training run is active."}), 409
+    try:
+        if os.name == "nt":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            proc.send_signal(signal.SIGINT)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not signal the training process: %s", exc)
+        return jsonify({"error": f"could not signal training: {exc}"}), 500
+    return jsonify({
+        "message": "Stop signal sent. Training will finish the current "
+                   "iteration and save; resume with --resume.",
+    })
 
 
 @app.route("/api/rl/metrics", methods=["GET"])
@@ -196,6 +270,72 @@ def get_exploitability():
     return jsonify(_aggregate_exploitability())
 
 
+@app.route("/api/rl/shadow_eval", methods=["GET"])
+def get_shadow_eval():
+    """Shadow-mode evaluation report for the active run (see shadow_eval.py).
+    404s when the run has none — the frontend then falls back to the baked
+    artifact, same as every other RL read."""
+    report = _read_json(_run_file("shadow_eval.json"), None)
+    if report is None:
+        matches = glob.glob(
+            os.path.join(os.path.abspath(_RESULTS_DIR), "**", "shadow_eval.json"),
+            recursive=True)
+        if matches:
+            report = _read_json(max(matches, key=os.path.getmtime), None)
+    if report is None:
+        return jsonify({"error": "no shadow evaluation for this run"}), 404
+    return jsonify(report)
+
+
+@app.route("/api/rl/sweep_comparison", methods=["GET"])
+def get_sweep_comparison():
+    """A/B sweep comparison — {"arms": [aggA, aggB]} written by
+    run_sweep.py --compare --out <results>/sweep_comparison.json (e.g. PFSP vs
+    uniform). 404 when none exists yet → the frontend falls back to the baked
+    artifact, same as every other RL read."""
+    results_root = os.path.abspath(_RESULTS_DIR)
+    report = _read_json(os.path.join(results_root, "sweep_comparison.json"), None)
+    if report is None:
+        matches = glob.glob(
+            os.path.join(results_root, "**", "sweep_comparison.json"),
+            recursive=True)
+        if matches:
+            report = _read_json(max(matches, key=os.path.getmtime), None)
+    if report is None:
+        return jsonify({"error": "no sweep comparison yet"}), 404
+    return jsonify(report)
+
+
+@app.route("/api/rl/health", methods=["GET"])
+def get_health():
+    """What this API is actually serving. The dashboards degrade silently when a
+    run is archived or a model is missing; this makes the cause one request away."""
+    run_dir, source = _resolve_run_dir_with_source()
+    history = _load_history()
+    models = {}
+    for role in ("attacker", "defender"):
+        path = _model_path(role)
+        models[role] = {"path": path, "exists": bool(path and os.path.exists(path))}
+
+    return jsonify({
+        "status":         "ok",
+        "run_dir":        run_dir,
+        "run_dir_source": source,
+        "iterations":     len(history.get("iterations", [])),
+        "files": {
+            name: bool(_run_file(name)) for name in (
+                "training_history.json", "training_metrics.json",
+                "elo_ratings.json", "training_curves.png", "shadow_eval.json")
+        },
+        "models":         models,
+        "is_training":    _is_training,
+        "demo_running":   _demo_running,
+        "exploitability_reports": _aggregate_exploitability()["n_runs"],
+        "artifact_manifest": _read_json(
+            os.path.join(_ARTIFACTS_DIR, "manifest.json"), None),
+    })
+
+
 @app.route("/api/rl/plots/<path:name>", methods=["GET"])
 def get_plot(name: str):
     """Serve a results PNG. `training_progress` is aliased to training_curves.png
@@ -204,6 +344,11 @@ def get_plot(name: str):
         name = "training_curves.png"
     if not name.endswith(".png"):
         name += ".png"
+    # Prefer the active run's copy, so the plot matches the history/leaderboard.
+    active = _run_file(name)
+    if active:
+        return send_from_directory(os.path.dirname(active),
+                                   os.path.basename(active), mimetype="image/png")
     abs_dir = os.path.abspath(_RESULTS_DIR)
     if os.path.exists(os.path.join(abs_dir, name)):
         return send_from_directory(abs_dir, name, mimetype="image/png")
@@ -220,12 +365,7 @@ def get_plot(name: str):
 
 @app.route("/api/rl/leaderboard", methods=["GET"])
 def get_leaderboard():
-    elo_path = "./models/cyberx_marl/results/elo_ratings.json"
-    if not os.path.exists(elo_path):
-        return jsonify({"leaderboard": []})
-    with open(elo_path) as f:
-        elo_data = json.load(f)
-    ratings = elo_data.get("ratings", {})
+    ratings = _read_json(_run_file("elo_ratings.json"), {}).get("ratings", {})
     board   = sorted(ratings.items(), key=lambda x: -x[1])
     return jsonify({
         "leaderboard": [{"agent": k, "elo": round(v)} for k, v in board]
@@ -234,9 +374,36 @@ def get_leaderboard():
 
 @app.route("/api/rl/paper/table", methods=["GET"])
 def get_paper_table():
-    if _trainer is None:
+    """Latest iteration as a markdown table. Built from the metrics on disk —
+    it used to require a trainer instance in this process, which meant it 404'd
+    for every archived run, i.e. every run you would actually write up."""
+    m = _latest_metrics()
+    if not m:
         return jsonify({"table": "No training data available yet."}), 404
-    return jsonify({"table": _trainer.evaluator.latest_summary_table()})
+
+    mm    = m.get("main_match", {}) or {}
+    lines = [
+        f"### CyberX MARL — iteration {m.get('iteration', '?')} "
+        f"(curriculum level {m.get('curriculum_level', '?')})",
+        "",
+        "| Match | Attacker win | Defender win | Draws | Mean ep. length |",
+        "|---|---|---|---|---|",
+        f"| self-play | {mm.get('att_win_rate')} | {mm.get('def_win_rate')} | "
+        f"{mm.get('draws')} | {mm.get('mean_ep_length')} |",
+    ]
+    for side, label in (("att", "RL attacker"), ("def", "RL defender")):
+        key = "att_win_rate" if side == "att" else "def_win_rate"
+        for baseline, res in sorted((m.get(f"{side}_vs_baselines", {}) or {}).items()):
+            res = res or {}
+            lines.append(
+                f"| {label} vs {baseline} | {res.get('att_win_rate')} | "
+                f"{res.get('def_win_rate')} | {res.get('draws')} | "
+                f"{res.get('mean_ep_length')} |")
+
+    ent = m.get("strategy_entropy", {}) or {}
+    lines += ["", f"Strategy entropy — attacker {ent.get('attacker')}, "
+                  f"defender {ent.get('defender')} (max 3.81 bits)."]
+    return jsonify({"table": "\n".join(lines), "run_dir": _resolve_run_dir()})
 
 
 @app.route("/api/rl/logs/stream", methods=["GET"])
@@ -299,13 +466,26 @@ def oracle_query():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _model_path(role: str) -> Optional[str]:
-    """Best snapshot if available, else the latest training weights."""
-    best = (_config.get_best_attacker_path() if role == "attacker"
-            else _config.get_best_defender_path())
-    if os.path.exists(best):
-        return best
-    latest = f"./models/cyberx_marl/{role}_latest.zip"
-    return latest if os.path.exists(latest) else None
+    """Weights for `role`: the configured best snapshot, else the active run's
+    best/latest, else the save-dir latest.
+
+    The run-dir candidates matter because archiving a finished run moves its
+    *_best.zip out of the save-dir root — without them the Copilot, demo and
+    telemetry endpoints all 404 'no trained model' while five runs' worth of
+    weights sit on disk.
+    """
+    configured = (_config.get_best_attacker_path() if role == "attacker"
+                  else _config.get_best_defender_path())
+    run_dir = _resolve_run_dir()
+    for candidate in (
+        configured,
+        os.path.join(run_dir, f"{role}_best.zip"),
+        os.path.join(run_dir, f"{role}_latest.zip"),
+        os.path.join(_SAVE_DIR, f"{role}_latest.zip"),
+    ):
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def _demo_put(event: dict) -> None:
@@ -479,34 +659,41 @@ def telemetry_suggest():
         es_url = data.get("es_url", "http://localhost:9200"),
         window = data.get("window", "now-5m"),
     )
+    summary = adapter.summarize(adapter.fetch_events())
     obs = adapter.build_observation(
         defense_state = data.get("defense_state"),
         step_fraction = float(data.get("step_fraction", 0.5)),
+        summary       = summary,
     )
 
-    if _advisor is None or _advisor_path != model_path:
-        _advisor = DefenderAdvisor(model_path)
-        _advisor_path = model_path
-    if data.get("reset"):
-        _advisor.reset()
+    # Loading the model costs ~10s, so the advisor is cached — but its LSTM
+    # state is then shared, and Flask serves these concurrently. Serialize
+    # access and let a caller ask for a clean history with {"reset": true}.
+    with _advisor_lock:
+        if _advisor is None or _advisor_path != model_path:
+            _advisor = DefenderAdvisor(model_path)
+            _advisor_path = model_path
+        if data.get("reset"):
+            _advisor.reset()
+        result = _advisor.suggest(obs)
 
-    result = _advisor.suggest(obs)
-    return jsonify({**result, "observation": obs.tolist()})
+    return jsonify({**result,
+                    "observation":    obs.tolist(),
+                    "events_summary": summary})
 
 
 @app.route("/api/rl/telemetry/stream", methods=["GET"])
 def telemetry_stream():
     """SSE: roll the trained defender over the live honeypot telemetry feed.
-    Each tick emits {events_summary, observation, action, action_name}. Powers
-    the Defender Copilot without the frontend polling. Inference only."""
-    global _advisor, _advisor_path
-
+    Each tick emits {events_summary, observation, action, action_name,
+    soc_state, outcome}. Powers the Defender Copilot without the frontend
+    polling. Inference only — nothing is executed against the honeypot."""
     es_url   = request.args.get("es_url", "http://localhost:9200")
     window   = request.args.get("window", "now-5m")
     interval = max(2.0, float(request.args.get("interval", 5.0)))
 
     def generate():
-        global _advisor, _advisor_path
+        from soc_state import SocState
         from telemetry_adapter import DefenderAdvisor, TelemetryAdapter
 
         model_path = _model_path("defender")
@@ -514,20 +701,35 @@ def telemetry_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': 'No trained defender found — run training first'})}\n\n"
             return
 
-        if _advisor is None or _advisor_path != model_path:
-            try:
-                _advisor = DefenderAdvisor(model_path)
-                _advisor_path = model_path
-            except Exception as exc:  # noqa: BLE001
-                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-                return
+        # Per-connection advisor and SOC state. These were module globals, so
+        # two open Copilots (the Command Center and the Honeypot Monitor each
+        # mount one) interleaved their writes into a single LSTM hidden state
+        # and corrupted each other's history.
+        try:
+            advisor = DefenderAdvisor(model_path)
+        except Exception as exc:  # noqa: BLE001
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
 
+        soc     = SocState()
         adapter = TelemetryAdapter(es_url=es_url, window=window)
         while True:
             try:
+                # One query per tick: build_observation would otherwise issue a
+                # second, so the summary shown to the user came from different
+                # events than the ones the model actually scored.
+                soc.decay()
                 summary = adapter.summarize(adapter.fetch_events())
-                obs     = adapter.build_observation(step_fraction=0.5)
-                result  = _advisor.suggest(obs)
+                obs     = adapter.build_observation(
+                    defense_state = soc.as_defense_state(),
+                    step_fraction = 0.5,
+                    summary       = summary,
+                )
+                result  = advisor.suggest(obs)
+                # Feed the recommendation back into the SOC posture, so evidence
+                # accumulates as the defender investigates and the next
+                # recommendation reflects it instead of freezing on one action.
+                outcome = soc.advance(result["action"], summary)
                 event   = {
                     "type":           "suggestion",
                     "time":           datetime.utcnow().isoformat(),
@@ -535,6 +737,8 @@ def telemetry_stream():
                     "observation":    obs.tolist(),
                     "action":         result["action"],
                     "action_name":    result["action_name"],
+                    "soc_state":      soc.as_defense_state(),
+                    "outcome":        outcome,
                 }
                 yield f"data: {json.dumps(event)}\n\n"
             except GeneratorExit:
@@ -557,20 +761,63 @@ def telemetry_stream():
 #   HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load_history() -> dict:
-    path = "./models/cyberx_marl/training_history.json"
-    if os.path.exists(path):
+def _resolve_run_dir_with_source() -> tuple:
+    """Locate the run whose results this API should serve, and say why.
+
+    A run in progress writes its history to the save-dir root; a finished run is
+    usually archived into `results/<run_name>/`. Reading only the root (the
+    original behaviour) returned empty history/leaderboard for every archived
+    run, which made the live dashboards *worse* than the baked artifacts.
+    """
+    env = os.environ.get("RL_RUN_DIR")
+    if env:
+        return os.path.abspath(env), "env:RL_RUN_DIR"
+
+    if os.path.exists(os.path.join(_SAVE_DIR, "training_history.json")):
+        return os.path.abspath(_SAVE_DIR), "save_dir"
+
+    archived = glob.glob(os.path.join(_RESULTS_DIR, "*", "training_history.json"))
+    if archived:
+        newest = max(archived, key=os.path.getmtime)
+        return os.path.abspath(os.path.dirname(newest)), "newest_archived_run"
+
+    return os.path.abspath(_SAVE_DIR), "default"
+
+
+def _resolve_run_dir() -> str:
+    return _resolve_run_dir_with_source()[0]
+
+
+def _run_file(name: str) -> Optional[str]:
+    """Path to a results file for the active run, or None.
+
+    Archived runs keep their results next to the history; a live run keeps them
+    in a `results/` subdir. Check both so either layout resolves.
+    """
+    run_dir = _resolve_run_dir()
+    for candidate in (os.path.join(run_dir, name),
+                      os.path.join(run_dir, "results", name)):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _read_json(path: Optional[str], default):
+    if not path:
+        return default
+    try:
         with open(path) as f:
             return json.load(f)
-    return {}
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _load_history() -> dict:
+    return _read_json(_run_file("training_history.json"), {})
 
 
 def _latest_metrics() -> dict:
-    metrics_path = "./models/cyberx_marl/results/training_metrics.json"
-    if not os.path.exists(metrics_path):
-        return {}
-    with open(metrics_path) as f:
-        all_m = json.load(f)
+    all_m = _read_json(_run_file("training_metrics.json"), [])
     return all_m[-1] if all_m else {}
 
 

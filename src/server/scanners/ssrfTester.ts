@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface SSRFResult {
   url: string;
@@ -39,6 +40,10 @@ export async function performSSRFTest(
   const start = performance.now();
 
   logToolActivity('SSRF Tester', `Testing SSRF on ${url} param=${parameter}`, 'info');
+  // Offensive tool: only runnable against private/loopback targets in lab mode
+  // (CYBERX_ALLOW_PRIVATE_TARGETS=1). On an exposed instance the base URL must
+  // be public, which keeps the server from being turned on its own network.
+  assertUrlAllowed(url);
 
   const successfulPayloads: string[] = [];
   let internalResponseDetected = false;

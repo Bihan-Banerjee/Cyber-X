@@ -15,12 +15,13 @@ import {
 } from "chart.js";
 import {
   Activity, Brain, Crosshair, Play, ShieldCheck, Swords, TrendingUp,
+  type LucideIcon,
 } from "lucide-react";
 import { API_BASE_URL } from "@/lib/api";
 import {
   fetchRL, rlArtifactPlotUrl, rlPlotUrl,
   type ExploitabilityReport, type LeaderboardEntry, type MetricsHistory,
-  type RLSource,
+  type RLSource, type ShadowArm, type ShadowEvalReport,
 } from "@/lib/rlData";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
@@ -40,10 +41,25 @@ const SourceBadge = ({ source }: { source: RLSource }) => (
   </span>
 );
 
+// A/B sweep aggregate written by run_sweep.py --compare (arms = e.g. pfsp vs
+// uniform). def_gap is the defender's exploitability gap — LOWER is better.
+interface SweepStat {
+  mean: number | null; iqm?: number | null; std?: number | null;
+  ci95?: { lo: number | null; hi: number | null };
+}
+interface SweepArmAgg {
+  tag: string; n_runs?: number;
+  def_win_rate?: SweepStat; att_win_rate?: SweepStat;
+  def_gap?: SweepStat; nashconv?: SweepStat;
+}
+interface SweepComparison { arms: SweepArmAgg[]; illustrative?: boolean; }
+
 const RLArena = () => {
   const [history, setHistory] = useState<MetricsHistory | null>(null);
   const [exploit, setExploit] = useState<ExploitabilityReport | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
+  const [shadow, setShadow] = useState<ShadowEvalReport | null>(null);
+  const [sweep, setSweep] = useState<SweepComparison | null>(null);
   const [source, setSource] = useState<RLSource>("replay");
 
   useEffect(() => {
@@ -63,6 +79,16 @@ const RLArena = () => {
         const l = await fetchRL<{ leaderboard: LeaderboardEntry[] }>(
           "/api/rl/leaderboard", "leaderboard.json");
         setBoard(l.data.leaderboard || []);
+      } catch { /* leave empty */ }
+      try {
+        const s = await fetchRL<ShadowEvalReport>(
+          "/api/rl/shadow_eval", "shadow_eval.json");
+        setShadow(s.data);
+      } catch { /* leave empty */ }
+      try {
+        const sw = await fetchRL<SweepComparison>(
+          "/api/rl/sweep_comparison", "sweep_comparison.json");
+        setSweep(sw.data);
       } catch { /* leave empty */ }
     })();
   }, []);
@@ -120,6 +146,22 @@ const RLArena = () => {
         )}
       </CyberpunkCard>
 
+      {/* PFSP vs uniform — the headline before/after */}
+      {sweep && sweep.arms && sweep.arms.length >= 2 && (
+        <CyberpunkCard title="PFSP vs UNIFORM — DEFENDER EXPLOITABILITY (BEFORE / AFTER)">
+          <SweepComparisonPanel sweep={sweep} />
+        </CyberpunkCard>
+      )}
+
+      {/* Shadow-mode evaluation (Phase D) */}
+      <CyberpunkCard title="SHADOW-MODE EVALUATION">
+        {shadow ? (
+          <ShadowPanel report={shadow} />
+        ) : (
+          <Empty msg="No shadow evaluation available." />
+        )}
+      </CyberpunkCard>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Leaderboard */}
         <CyberpunkCard title="ELO LEADERBOARD">
@@ -143,7 +185,7 @@ const RLArena = () => {
         </CyberpunkCard>
 
         {/* Demo replay */}
-        <DemoPlayer />
+        <DemoPlayer source={source} />
       </div>
 
       {/* Full training plot */}
@@ -166,19 +208,37 @@ const RLArena = () => {
 const TrainingControl = ({ source }: { source: RLSource }) => {
   const [status, setStatus] = useState<string>("idle");
 
+  // Reconcile with the backend rather than trusting local optimism: the button
+  // used to report "training" even when the server had rejected the request.
+  useEffect(() => {
+    if (source !== "live") return;
+    const poll = async () => {
+      try {
+        const r = await fetch(`${API_BASE_URL}/api/rl/status`);
+        const d = await r.json();
+        setStatus(d.is_training ? "training" : "idle");
+      } catch { setStatus("unavailable"); }
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, [source]);
+
   const start = async () => {
     try {
-      await fetch(`${API_BASE_URL}/api/rl/train/start`, {
+      const r = await fetch(`${API_BASE_URL}/api/rl/train/start`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ iterations: 10, timesteps: 50000 }),
       });
+      if (r.status === 409) { setStatus("already running"); return; }
+      if (!r.ok) { setStatus(`error ${r.status}`); return; }
       setStatus("training");
     } catch { setStatus("unavailable"); }
   };
   const stop = async () => {
     try {
-      await fetch(`${API_BASE_URL}/api/rl/train/stop`, { method: "POST" });
-      setStatus("idle");
+      const r = await fetch(`${API_BASE_URL}/api/rl/train/stop`, { method: "POST" });
+      setStatus(r.ok ? "stopping" : `error ${r.status}`);
     } catch { setStatus("unavailable"); }
   };
 
@@ -266,6 +326,121 @@ const ExploitabilityPanel = ({ report }: { report: ExploitabilityReport }) => {
   );
 };
 
+// ── Shadow-mode evaluation ─────────────────────────────────────────────────
+
+/**
+ * Renders what the sim-trained defender actually does on honeypot telemetry.
+ *
+ * Action *entropy* is shown as prominently as the agreement scores on purpose.
+ * The original harness scored 65% "reasonable agreement" while emitting a
+ * single action for every window — the score was high precisely because one
+ * action happened to sit in several permissive acceptable-sets. A degenerate
+ * policy has to be legible as degenerate.
+ */
+const ShadowPanel = ({ report }: { report: ShadowEvalReport }) => {
+  const acted = Object.entries(report.action_distribution)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const max = Math.max(...acted.map(([, n]) => n), 1);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border ${
+          report.synthetic
+            ? "text-yellow-400 border-yellow-500/40"
+            : "text-green-400 border-green-500/40"}`}>
+          {report.synthetic ? "SYNTHETIC TELEMETRY" : "RECORDED TELEMETRY"}
+        </span>
+        <span className="text-xs text-gray-500">
+          {report.n_events} events · {report.n_windows} windows
+        </span>
+      </div>
+
+      {report.constant_policy && (
+        <div className="p-3 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 text-sm">
+          The policy emitted a single action for every window — the agreement
+          scores below do not reflect judgement.
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <MiniStat label="Action entropy"
+          value={`${report.action_entropy_bits.toFixed(2)} bits`}
+          color={report.constant_policy ? "text-yellow-400" : "text-cyber-cyan"} />
+        <MiniStat label="Distinct actions"
+          value={report.distinct_actions} color="text-gray-200" />
+        <MiniStat label="Exact agreement"
+          value={PCT(report.exact_agreement)} color="text-gray-200" />
+        <MiniStat label="Justified containments"
+          value={report.containments} color="text-cyber-cyan" />
+      </div>
+
+      <div>
+        <p className="text-xs text-gray-400 mb-2 tracking-wide">ACTION DISTRIBUTION</p>
+        <div className="space-y-1">
+          {acted.map(([name, n]) => (
+            <div key={name} className="flex items-center gap-3">
+              <span className="text-xs text-gray-400 w-40 shrink-0">
+                {name.replace(/_/g, " ")}
+              </span>
+              <div className="flex-1 h-2 bg-black/40 rounded overflow-hidden">
+                <div className="h-full bg-cyber-cyan"
+                  style={{ width: `${(n / max) * 100}%` }} />
+              </div>
+              <span className="font-mono text-xs text-gray-300 w-8 text-right">{n}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {report.frozen_baseline && (
+        <details className="text-xs text-gray-400">
+          <summary className="cursor-pointer hover:text-gray-200">
+            Compare with the frozen-posture baseline
+          </summary>
+          <p className="mt-2 text-gray-500">
+            The original harness held the SOC's own state (evidence, alerts,
+            decoys, containment) at zero, so most of the observation never moved.
+          </p>
+          <table className="w-full mt-2 font-mono">
+            <thead className="text-gray-500">
+              <tr>
+                <th className="text-left">config</th><th>entropy</th>
+                <th>actions</th><th>exact</th><th>contain</th>
+              </tr>
+            </thead>
+            <tbody>
+              <ArmRow label="frozen (before)" arm={report.frozen_baseline} />
+              <ArmRow label="closed loop (now)" arm={report} />
+            </tbody>
+          </table>
+        </details>
+      )}
+
+      {report.note && <p className="text-xs text-gray-500">{report.note}</p>}
+    </div>
+  );
+};
+
+const ArmRow = ({ label, arm }: { label: string; arm: ShadowArm }) => (
+  <tr className="text-gray-300">
+    <td className="text-left">{label}</td>
+    <td className="text-center">{arm.action_entropy_bits.toFixed(2)}</td>
+    <td className="text-center">{arm.distinct_actions}</td>
+    <td className="text-center">{PCT(arm.exact_agreement)}</td>
+    <td className="text-center">{arm.containments}</td>
+  </tr>
+);
+
+const MiniStat = ({ label, value, color }:
+  { label: string; value: React.ReactNode; color: string }) => (
+  <div className="glass-panel rounded p-3">
+    <div className={`text-xl font-bold ${color}`}>{value}</div>
+    <div className="text-[11px] text-gray-400 mt-1">{label}</div>
+  </div>
+);
+
 // ── Demo replay ────────────────────────────────────────────────────────────
 
 interface DemoStep {
@@ -282,21 +457,60 @@ interface DemoStep {
 
 const STAGES = ["RECON", "FOOTHOLD", "PRIVILEGED", "OBJECTIVE"];
 
-const DemoPlayer = () => {
+const DemoPlayer = ({ source }: { source: RLSource }) => {
   const [events, setEvents] = useState<DemoStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [mode, setMode] = useState<"recorded" | "live">("recorded");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
-  const load = async () => {
+  const loadRecorded = async () => {
     try {
       const res = await fetch("/rl-artifacts/demo_episode.json");
       const data = await res.json();
       setEvents(data.events || []);
       setIdx(0);
+      setMode("recorded");
       setPlaying(true);
     } catch { /* none */ }
   };
+
+  /** Run a fresh best-vs-best match on the live backend and stream it in.
+   *  api.py has exposed /demo/start + /demo/stream all along; nothing called
+   *  them, so the live match was unreachable from the UI. */
+  const runLive = async () => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/rl/demo/start`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ episodes: 1, step_delay: 0.1 }),
+      });
+      if (!r.ok) { await loadRecorded(); return; }
+
+      setEvents([]);
+      setIdx(0);
+      setMode("live");
+      setPlaying(false);   // the stream paces itself; no local timer
+
+      esRef.current?.close();
+      const es = new EventSource(`${API_BASE_URL}/api/rl/demo/stream`);
+      esRef.current = es;
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.ping) return;
+          if (data.type === "done" || data.type === "error") { es.close(); return; }
+          setEvents((prev) => {
+            setIdx(prev.length);
+            return [...prev, data];
+          });
+        } catch { /* ignore malformed frame */ }
+      };
+      es.onerror = () => es.close();
+    } catch { await loadRecorded(); }
+  };
+
+  useEffect(() => () => esRef.current?.close(), []);
 
   useEffect(() => {
     if (!playing || !events.length) return;
@@ -316,10 +530,24 @@ const DemoPlayer = () => {
   return (
     <CyberpunkCard title="BEST-VS-BEST DEMO">
       <div className="space-y-4">
-        <button onClick={load}
-          className="px-5 py-2 bg-cyber-cyan/20 hover:bg-cyber-cyan/30 text-cyber-cyan rounded flex items-center gap-2">
-          <Play className="w-4 h-4" /> {events.length ? "Replay episode" : "Play recorded episode"}
-        </button>
+        <div className="flex flex-wrap gap-2 items-center">
+          <button onClick={loadRecorded}
+            className="px-5 py-2 bg-cyber-cyan/20 hover:bg-cyber-cyan/30 text-cyber-cyan rounded flex items-center gap-2">
+            <Play className="w-4 h-4" />
+            {events.length && mode === "recorded" ? "Replay episode" : "Play recorded episode"}
+          </button>
+          {source === "live" && (
+            <button onClick={runLive}
+              className="px-5 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded flex items-center gap-2">
+              <Play className="w-4 h-4" /> Run live match
+            </button>
+          )}
+          {mode === "live" && (
+            <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border text-green-400 border-green-500/40">
+              live match
+            </span>
+          )}
+        </div>
 
         {cur && cur.type === "step" && (
           <div className="glass-panel rounded p-4 space-y-3">
@@ -385,7 +613,8 @@ const Empty = ({ msg }: { msg: string }) => (
 );
 
 const StatCard = ({ icon: Icon, label, value, sub, color }:
-  { icon: any; label: string; value: any; sub?: string; color: string }) => (
+  { icon: LucideIcon; label: string; value: React.ReactNode;
+    sub?: string; color: string }) => (
   <div className="glass-panel rounded p-5">
     <Icon className={`w-7 h-7 ${color} mb-3`} />
     <div className={`text-2xl font-bold ${color}`}>
@@ -428,5 +657,64 @@ function chartOpts(title: string) {
     },
   };
 }
+
+const fmtStat = (s?: SweepStat) => {
+  if (!s || s.mean == null) return "—";
+  const std = s.std != null ? ` ± ${s.std.toFixed(2)}` : "";
+  const iqm = s.iqm != null ? ` · IQM ${s.iqm.toFixed(2)}` : "";
+  const ci = s.ci95 && s.ci95.lo != null && s.ci95.hi != null
+    ? ` · CI [${s.ci95.lo.toFixed(2)}, ${s.ci95.hi.toFixed(2)}]` : "";
+  return `${s.mean.toFixed(2)}${std}${iqm}${ci}`;
+};
+
+const SweepComparisonPanel = ({ sweep }: { sweep: SweepComparison }) => {
+  const byTag = (t: string) => sweep.arms.find((a) => a.tag.toLowerCase().includes(t));
+  const pfsp = byTag("pfsp") || sweep.arms[0];
+  const uniform = byTag("uniform") || sweep.arms[1];
+  const gp = pfsp?.def_gap?.mean ?? null;
+  const gu = uniform?.def_gap?.mean ?? null;
+  const gapDelta = gp != null && gu != null ? gp - gu : null;
+  const rows = [
+    { label: uniform?.tag ?? "uniform", arm: uniform, tone: "text-gray-300" },
+    { label: pfsp?.tag ?? "pfsp", arm: pfsp, tone: "text-fuchsia-300" },
+  ];
+  return (
+    <div className="space-y-4">
+      {sweep.illustrative && (
+        <div className="text-[11px] text-yellow-500/80 border border-yellow-500/30 rounded px-3 py-1.5">
+          Illustrative sample — run both arms, then run_sweep.py --compare pfsp uniform for real numbers.
+        </div>
+      )}
+      <p className="text-xs text-gray-400">
+        Defender exploitability gap (<span className="text-gray-300">def_gap</span> — lower means harder
+        to exploit) and defender win rate: PFSP vs the uniform-league control, with IQM and 95% CIs.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {rows.map((r) => (
+          <div key={r.label} className="glass-panel rounded p-4">
+            <div className={`uppercase tracking-widest text-xs font-bold mb-2 ${r.tone}`}>
+              {r.label}
+              {r.arm?.n_runs ? <span className="text-gray-500 font-normal"> · {r.arm.n_runs} seeds</span> : null}
+            </div>
+            <div className="text-[11px] text-gray-400">Defender exploitability gap</div>
+            <div className="text-xl font-bold text-cyber-cyan">{fmtStat(r.arm?.def_gap)}</div>
+            <div className="text-[11px] text-gray-400 mt-2">Defender win rate</div>
+            <div className="text-sm text-gray-200">{fmtStat(r.arm?.def_win_rate)}</div>
+          </div>
+        ))}
+      </div>
+      {gapDelta != null && (
+        <div className={`text-sm font-bold ${gapDelta < 0 ? "text-fuchsia-300" : "text-gray-400"}`}>
+          PFSP shifts the defender exploitability gap by {gapDelta >= 0 ? "+" : ""}{gapDelta.toFixed(2)}
+          <span className="font-normal text-gray-400">
+            {gapDelta < 0
+              ? " — the defender got harder to exploit (the goal)."
+              : " — no separation yet; check the CIs and add seeds."}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default RLArena;

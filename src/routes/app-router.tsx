@@ -34,6 +34,7 @@ import VideoSteganography from "@/pages/tools/VideoSteganography";
 import GoogleDorkGenerator from "@/pages/tools/GoogleDorkGenerator";
 import PacketCapturer from "@/pages/tools/PacketCapturer";
 import RLArena from "@/pages/RLArena";
+import RedVsBlue from "@/pages/RedVsBlue";
 import CommandCenter from "@/pages/CommandCenter";
 import WorldMap from '@/components/WorldMap';
 import Guide from "@/pages/Guide";
@@ -157,6 +158,7 @@ const AppRouter = () => {
         <Route path="/honeypots" element={<HoneypotMonitor />} />
         <Route path="/rl-arena" element={<RLArena />} />
         <Route path="/rl-training" element={<RLArena />} />
+        <Route path="/red-vs-blue" element={<RedVsBlue />} />
         <Route path="/world-map" element={<WorldMap />} />
         <Route path="/guide" element={<Guide />} />
         <Route path="/tools/base64-encoder" element={<Base64Encoder />} />
