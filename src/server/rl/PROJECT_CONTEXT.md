@@ -719,3 +719,87 @@ NashConv below 0.36 ± 0.06. Report overlapping CIs as overlapping.
 **20** self-tests (was 17): added `soc_state_closes_the_observation_loop`,
 `pfsp_prioritizes_losses_without_starving_the_pool`,
 `attack_grounding_matches_env_and_frontend`.
+
+
+## 18. First PFSP before/after run and findings (2026-09-15, n=2 first signal)
+
+The §17 experiment was finally run, as a 2-seed first-signal pass before committing
+to the full sweep. Command (from `src/server/rl`, main checkout on `master`):
+
+```
+python run_experiment.py --seeds 1 2 --iterations 30 --timesteps 30000
+```
+
+Setup: uniform control arm and PFSP arm, seeds 1-2, 30 iterations, 30k timesteps/iter
+(a fast signal, not the full 100k config default), best-response exploitability probe
+at the default `--br-iterations 12`. Seed 2 of the uniform arm was interrupted at
+iteration 15 and resumed cleanly from `trainer_state.json` (next_iteration 16); the
+history stitched with no gap, no curriculum reset, and no metric discontinuity.
+
+### Base arm sanity (both uniform seeds, before reading the comparison)
+
+Both seeds completed 30/30 with a healthy, non-collapsed self-play band (attacker win
+~0.56/0.63 overall, defender ~0.44/0.37), monotonic curriculum 0->1->2, zero phantom
+draws in every RL-vs-RL matchup (the old metric-corruption path did not fire). One
+consistent, interpretable weakness in both seeds: the defender loses to the SCRIPTED
+attacker (~32-33% win) while beating the expert attacker (~57-58%) and random. That is
+a specific blind spot against a fixed exploit pattern, which is exactly what PFSP is
+meant to target, so it makes a clean "before" baseline.
+
+### The before/after result: INCONCLUSIVE, no PFSP win at n=2
+
+Aggregate mean over the two seeds (lower gap = less exploitable = better):
+
+| metric                       | uniform (before) | pfsp (after) | note                    |
+|------------------------------|------------------|--------------|-------------------------|
+| DEF gap (max, peak-biased)   | 0.09 [0.0,0.18]  | 0.21 [0.10,0.32] | uniform better      |
+| DEF gap (tail, honest)       | 0.033            | 0.123        | uniform better          |
+| ATT gap (max)                | 0.23             | 0.15         | pfsp better             |
+| ATT gap (tail)               | 0.086            | 0.024        | pfsp better             |
+| nashconv (max)               | 0.32             | 0.36         | uniform slightly better |
+| att win / def win            | 0.564 / 0.436    | 0.619 / 0.381 | pfsp shifts to attacker |
+
+PFSP reduced the ATTACKER's exploitability but not the DEFENDER's; at the point estimate
+the defender got slightly more exploitable, the opposite of the hypothesis. Both agents
+share the league setting, so PFSP concentrated both sides on hard opponents and the
+attacker benefited more. None of this is significant at n=2: per-seed def_gap is
+uniform {0.00, 0.18}, pfsp {0.10, 0.32}, std ~0.1 on a ~0.1 signal, and every CI overlaps.
+No conclusion, positive or negative, is warranted yet.
+
+### Three methodology issues that make even the point estimates unreliable
+
+1. **The best-response probe never converged** (`converged: false` on both sides in all
+   four runs, `br_iterations: 12`). Every gap is a noisy under-estimate. A converged
+   probe wants `--br-iterations ~40`, but at 40k timesteps/br-iteration that roughly
+   triples every probe and pushes the 6-run sweep past ~70h on one GPU, so it is left
+   at 12 and the limitation is stated rather than pretended away.
+2. **The headline gap used max(curve), not the plateau.** `gap_over_equilibrium` takes
+   the single luckiest BR iteration; `gap_tail_mean` (last-3 mean) is the honest
+   estimator. The sweep now reports both (see code changes below).
+3. **The equilibrium point drifts across seeds**, so gap-over-equilibrium is not
+   comparable seed-to-seed: uniform_seed1 settled attacker-favored (att-win 0.72 at
+   equilibrium) leaving almost no headroom, so its def_gap is mechanically ~0;
+   pfsp_seed2 settled balanced (0.50) leaving maximum headroom, so its def_gap is 0.32.
+
+Honest-framing takeaway: the infrastructure is sensitive enough to catch a null/negative
+result and refuse to overclaim. The story is "PFSP lowered attacker exploitability;
+defender exploitability was not significantly reduced at this scale (n=2, unconverged
+probe)", which the full `--seeds 1 2 3` run settles.
+
+### Code changes landed with this analysis (branch `rl_integration_ports`)
+
+- `run_sweep.py`: `--skip-done` now gates on real completion (`trainer_state.json`
+  `next_iteration > iterations`) instead of the mere existence of `training_history.json`
+  (which is written every iteration and wrongly marked a partial seed "done"). `train_one`
+  auto-adds `--resume` when a partial `trainer_state.json` is present, so a `run_sweep` /
+  `run_experiment` interrupted mid-seed resumes cleanly on a plain re-run of the same
+  command instead of skipping or restarting the seed.
+- `run_sweep.py`: `read_run`/`aggregate`/`print_agg`/`--compare` now surface the
+  trailing-plateau gaps (`att_gap_tail`, `def_gap_tail`, `nashconv_tail`) beside the
+  max-based gaps, plus the probe's `br_iterations` and a `probe_converged_all` flag with
+  an explicit "UNCONVERGED - gaps under-measured" warning in the printout and comparison.
+- `provenance.py`: the run manifest now overlays the effective seed and PFSP flag onto a
+  copy of the resolved config, so `resolved_config` stops reporting the config.json
+  defaults (`seed 42`, pfsp off) for a `--seed N --pfsp` run and the `config_hash`
+  distinguishes the PFSP arm from its uniform control. Timesteps override is still only
+  in `argv` (documented gap).

@@ -15,6 +15,7 @@ Nothing here is on the training hot path; it runs once per run.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -80,16 +81,28 @@ def write_run_manifest(
     if os.path.exists(path) and not overwrite:
         return path
 
+    # config_loader.resolved() returns raw config.json, so it shows the file
+    # defaults (seed 42, pfsp off) even for a `--seed N --pfsp` run — misleading
+    # read alone, and it makes the config hash identical across arms. Overlay the
+    # effective CLI overrides onto a copy so the stored config and its hash are
+    # accurate and the PFSP arm is distinguishable from its uniform control.
+    resolved = copy.deepcopy(resolved_config)
+    resolved["seed"] = seed
+    if extra and "pfsp_enabled" in extra and isinstance(resolved.get("league"), dict):
+        pfsp = resolved["league"].get("pfsp")
+        if isinstance(pfsp, dict):
+            pfsp["enabled"] = extra["pfsp_enabled"]
+
     manifest = {
         "generated_at":     datetime.now(timezone.utc).isoformat(),
         "git_sha":          _git_sha(),
         "seed":             seed,
-        "config_hash":      config_hash(resolved_config),
+        "config_hash":      config_hash(resolved),
         "reward_overrides": reward_overrides or {},
         "python":           sys.version.split()[0],
         "packages":         _package_versions(),
         "argv":             sys.argv,
-        "resolved_config":  resolved_config,
+        "resolved_config":  resolved,
     }
     if extra:
         manifest.update(extra)
