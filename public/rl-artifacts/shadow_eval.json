@@ -1,5 +1,5 @@
 {
-  "model": "D:\\EXTRA\\Cyber-X\\src\\server\\rl\\models\\cyberx_marl\\results\\run_four_a\\defender_best.zip",
+  "model": "D:\\EXTRA\\Cyber-X\\src\\server\\rl\\models\\cyberx_marl\\results\\pfsp_seed1\\defender_best.zip",
   "n_events": 400,
   "window_size": 20,
   "synthetic": true,
@@ -12,26 +12,25 @@
     "investigate": 0,
     "rate_limit": 0,
     "deploy_decoy": 1,
-    "threat_hunt": 12,
+    "threat_hunt": 16,
     "isolate_host": 3,
     "hard_block": 0,
     "patch_harden": 0,
     "rotate_credentials": 0,
     "restore_backup": 0,
-    "raise_alert": 4,
+    "raise_alert": 0,
     "deception_response": 0
   },
-  "distinct_actions": 4,
-  "action_entropy_bits": 1.533,
+  "distinct_actions": 3,
+  "action_entropy_bits": 0.884,
   "constant_policy": false,
   "confusion_by_situation": {
     "scan": {
-      "threat_hunt": 8
+      "threat_hunt": 7,
+      "isolate_host": 1
     },
     "creds": {
-      "raise_alert": 4,
-      "threat_hunt": 2,
-      "isolate_host": 1
+      "threat_hunt": 7
     },
     "quiet": {
       "isolate_host": 1,
@@ -45,8 +44,8 @@
       "isolate_host": 1
     }
   },
-  "exact_agreement": 0.45,
-  "reasonable_agreement": 0.55,
+  "exact_agreement": 0.35,
+  "reasonable_agreement": 0.7,
   "containments": 1,
   "false_positives": 0,
   "rows": [
@@ -95,11 +94,11 @@
         "n_src_ips": 5
       },
       "situation": "creds",
-      "rl_action": "raise_alert",
+      "rl_action": "threat_hunt",
       "expected": "isolate_host",
-      "reasonable": false,
-      "evidence": 5.704,
-      "effect": "escalated"
+      "reasonable": true,
+      "evidence": 7.204,
+      "effect": "hunt_hit"
     },
     {
       "summary": {
@@ -112,11 +111,11 @@
         "n_src_ips": 5
       },
       "situation": "creds",
-      "rl_action": "raise_alert",
+      "rl_action": "threat_hunt",
       "expected": "isolate_host",
-      "reasonable": false,
-      "evidence": 6.476,
-      "effect": "escalated"
+      "reasonable": true,
+      "evidence": 9.416,
+      "effect": "hunt_hit"
     },
     {
       "summary": {
@@ -248,11 +247,11 @@
         "n_src_ips": 5
       },
       "situation": "scan",
-      "rl_action": "threat_hunt",
+      "rl_action": "isolate_host",
       "expected": "threat_hunt",
-      "reasonable": true,
-      "evidence": 7.112,
-      "effect": "hunt_hit"
+      "reasonable": false,
+      "evidence": 0.0,
+      "effect": "contained"
     },
     {
       "summary": {
@@ -265,11 +264,11 @@
         "n_src_ips": 5
       },
       "situation": "creds",
-      "rl_action": "raise_alert",
+      "rl_action": "threat_hunt",
       "expected": "isolate_host",
-      "reasonable": false,
-      "evidence": 7.827,
-      "effect": "escalated"
+      "reasonable": true,
+      "evidence": 2.5,
+      "effect": "hunt_hit"
     },
     {
       "summary": {
@@ -282,11 +281,11 @@
         "n_src_ips": 5
       },
       "situation": "creds",
-      "rl_action": "isolate_host",
+      "rl_action": "threat_hunt",
       "expected": "isolate_host",
       "reasonable": true,
-      "evidence": 0.0,
-      "effect": "contained"
+      "evidence": 4.9,
+      "effect": "hunt_hit"
     },
     {
       "summary": {
@@ -367,11 +366,11 @@
         "n_src_ips": 5
       },
       "situation": "creds",
-      "rl_action": "raise_alert",
+      "rl_action": "threat_hunt",
       "expected": "isolate_host",
-      "reasonable": false,
-      "evidence": 7.916,
-      "effect": "escalated"
+      "reasonable": true,
+      "evidence": 9.416,
+      "effect": "hunt_hit"
     },
     {
       "summary": {
