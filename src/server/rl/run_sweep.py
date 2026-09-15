@@ -49,6 +49,21 @@ def run_dir_for(tag: str, seed: int) -> str:
     return os.path.join(_RESULTS_DIR, f"{tag}_seed{seed}")
 
 
+def _run_complete(save_dir: str, n_iters: int) -> bool:
+    """A run counts as done only when trainer_state.json says it advanced past
+    the last iteration. Keying "done" on training_history.json (written every
+    iteration) treats a seed stopped mid-run as finished and skips it forever —
+    so a resumed sweep would silently leave a partial seed in the aggregate."""
+    ts = os.path.join(save_dir, "trainer_state.json")
+    if not os.path.exists(ts):
+        return False
+    try:
+        with open(ts) as f:
+            return int(json.load(f).get("next_iteration", 0)) > n_iters
+    except (ValueError, OSError, json.JSONDecodeError):
+        return False
+
+
 def bootstrap_ci(values, n_boot: int = 10_000, alpha: float = 0.05, seed: int = 0):
     """Percentile bootstrap CI of the mean. With 3-5 seeds a normal-theory
     interval is not credible; resampling at least reports honest width."""
@@ -106,9 +121,19 @@ def read_run(tag: str, seed: int, last_n: int = 10) -> dict:
     if os.path.exists(expl_path):
         with open(expl_path) as f:
             e = json.load(f)
+        ae = e.get("attacker_exploitability") or {}
+        de = e.get("defender_exploitability") or {}
         row["nashconv"] = e.get("nashconv")
-        row["att_gap"] = (e.get("attacker_exploitability") or {}).get("gap_over_equilibrium")
-        row["def_gap"] = (e.get("defender_exploitability") or {}).get("gap_over_equilibrium")
+        row["nashconv_tail"] = e.get("nashconv_tail_mean")
+        row["att_gap"] = ae.get("gap_over_equilibrium")
+        row["def_gap"] = de.get("gap_over_equilibrium")
+        # gap_over_equilibrium uses max(curve) and is peak-biased; the trailing
+        # plateau mean is the honest estimator. Report both so an unconverged,
+        # noisy probe cannot masquerade as a clean gap.
+        row["att_gap_tail"] = ae.get("gap_tail_mean")
+        row["def_gap_tail"] = de.get("gap_tail_mean")
+        row["br_iterations"] = e.get("br_iterations")
+        row["probe_converged"] = not e.get("unconverged_sides")
     return row
 
 
@@ -118,15 +143,23 @@ def aggregate(tag: str, seeds) -> dict:
     missing = [r["seed"] for r in rows if not r.get("found")]
     agg = {"tag": tag, "seeds": list(seeds), "n_runs": len(found),
            "missing_seeds": missing, "runs": rows}
-    for key in ("att_win_rate", "def_win_rate", "nashconv", "att_gap", "def_gap"):
+    for key in ("att_win_rate", "def_win_rate", "nashconv", "nashconv_tail",
+                "att_gap", "def_gap", "att_gap_tail", "def_gap_tail"):
         agg[key] = summarize([r.get(key) for r in found])
+    # Provenance for the honesty caveats: how deep the best-response probe ran
+    # and whether every side converged. An unconverged probe under-measures the
+    # gap, so the reader must be told before quoting a delta.
+    probed = [r for r in found if r.get("probe_converged") is not None]
+    agg["br_iterations"] = next((r.get("br_iterations") for r in probed), None)
+    agg["probe_converged_all"] = (all(r.get("probe_converged") for r in probed)
+                                  if probed else None)
     return agg
 
 
 def train_one(tag: str, seed: int, args) -> bool:
     save_dir = run_dir_for(tag, seed)
-    if os.path.exists(os.path.join(save_dir, "training_history.json")) and args.skip_done:
-        print(f"  [{tag} seed {seed}] already done — skipping")
+    if args.skip_done and _run_complete(save_dir, args.iterations):
+        print(f"  [{tag} seed {seed}] already complete ({args.iterations} iters) — skipping")
         return True
 
     cmd = [sys.executable, os.path.join(_SCRIPT_DIR, "run_training.py"),
@@ -142,6 +175,10 @@ def train_one(tag: str, seed: int, args) -> bool:
         cmd += ["--no-pfsp"]
     for a in args.ablate:
         cmd += ["--ablate", a]
+    # An interrupted seed left a trainer_state.json but is not complete (checked
+    # above): resume from its last checkpoint instead of restarting at iter 1.
+    if os.path.exists(os.path.join(save_dir, "trainer_state.json")):
+        cmd += ["--resume"]
 
     print(f"\n{'='*68}\n  {tag} · seed {seed}\n  {' '.join(cmd)}\n{'='*68}", flush=True)
     t0 = time.time()
@@ -151,10 +188,16 @@ def train_one(tag: str, seed: int, args) -> bool:
 
 
 def print_agg(agg: dict) -> None:
+    conv = agg.get("probe_converged_all")
+    conv_note = ""
+    if conv is not None:
+        conv_note = (f", probe br={agg.get('br_iterations')} "
+                     f"{'converged' if conv else 'UNCONVERGED - gaps under-measured'}")
     print(f"\n  {agg['tag']}  ({agg['n_runs']} runs"
           + (f", missing seeds {agg['missing_seeds']}" if agg["missing_seeds"] else "")
-          + ")")
-    for key in ("att_win_rate", "def_win_rate", "nashconv", "att_gap", "def_gap"):
+          + conv_note + ")")
+    for key in ("att_win_rate", "def_win_rate", "nashconv", "nashconv_tail",
+                "att_gap", "att_gap_tail", "def_gap", "def_gap_tail"):
         s = agg[key]
         if s["mean"] is None:
             continue
@@ -188,12 +231,17 @@ def main() -> None:
             print_agg(a)
         a, b = arms
         print(f"\n  {a['tag']} vs {b['tag']}:")
-        for key in ("def_win_rate", "nashconv", "def_gap"):
+        for key in ("def_win_rate", "nashconv", "nashconv_tail",
+                    "def_gap", "def_gap_tail", "att_gap", "att_gap_tail"):
             if a[key]["mean"] is not None and b[key]["mean"] is not None:
                 delta = a[key]["mean"] - b[key]["mean"]
                 print(f"    Δ {key:14s} {delta:+.3f}")
         print("\n  Overlapping CIs mean the arms are not separated at this "
               "sample size — report that, don't round it away.")
+        if any(arm.get("probe_converged_all") is False for arm in arms):
+            print("  NOTE: the best-response probe did not converge — the *_gap "
+                  "numbers under-measure exploitability. Prefer *_gap_tail and "
+                  "raise --br-iterations before quoting a headline delta.")
         if args.out:
             with open(args.out, "w") as f:
                 json.dump({"arms": arms}, f, indent=2)
