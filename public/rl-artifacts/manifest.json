@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-15T17:33:28.213564+00:00",
+  "generated_at": "2026-09-16T15:47:17.303858+00:00",
   "source_run": "pfsp_seed1",
   "n_iterations": 30,
   "nashconv": {
@@ -7,13 +7,17 @@
     "std": 0.073
   },
   "regenerated": {
-    "demo": true,
-    "shadow": true
+    "demo": false,
+    "shadow": false
   },
   "files": {
     "copilot_sample.json": {
       "sha256": "fc143f9acbe7c541c87a0a2b2cf088d9a5c0a909c55064d48e062652cdcc3b7c",
       "bytes": 4532
+    },
+    "crossplay.json": {
+      "sha256": "030f71c6af3d5be43be71113cc9421ec37ec4fbc519d23e0e3476ef2a25ea947",
+      "bytes": 2551
     },
     "demo_episode.json": {
       "sha256": "b5f59378f0283d6d0a34d2975b2ab610c83d51db0f947f7450e0a1ac426d7b41",
@@ -32,8 +36,8 @@
       "bytes": 3788
     },
     "red_team_probe.json": {
-      "sha256": "f80a968bdefd01a5a80bf34b32235a0c5127c48d96c964ba72b7a20dddfa1042",
-      "bytes": 556
+      "sha256": "f5b915c03844f6b2cce52ae8f8bb81b8f9a6619ed1c5ed9e80e09342df4e1a30",
+      "bytes": 2861
     },
     "red_vs_blue.json": {
       "sha256": "2ae1e39004cd703b1c98ab9538282cd213b9360e41ce3417b6a8d516e51f91d7",
@@ -52,11 +56,5 @@
       "bytes": 268642
     }
   },
-  "note": "Baked snapshot of a real CyberX MARL run for the hosted site / replay mode. Regenerate with `export_artifacts.py --all`.",
-  "shadow_eval": {
-    "distinct_actions": 3,
-    "action_entropy_bits": 0.884,
-    "exact_agreement": 0.35,
-    "constant_policy": false
-  }
+  "note": "Baked snapshot of a real CyberX MARL run for the hosted site / replay mode. Regenerate with `export_artifacts.py --all`."
 }
