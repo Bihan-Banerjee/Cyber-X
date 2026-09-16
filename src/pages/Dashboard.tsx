@@ -165,7 +165,7 @@ const Dashboard = () => {
       </div>
 
       {/* Main Dashboard Card */}
-      <CyberpunkCard title="SYSTEM OVERVIEW">
+      <CyberpunkCard maxWidth="max-w-none" title="SYSTEM OVERVIEW">
         <div className="space-y-6">
           <div className="border-b border-cyber-red/20 pb-4">
             <h3 className="text-lg font-bold text-cyber-cyan mb-3 tracking-wide">

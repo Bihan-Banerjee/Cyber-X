@@ -130,7 +130,7 @@ const HoneypotMonitor = () => {
       </div>
 
       {/* Honeypot Status Cards */}
-      <CyberpunkCard title="HONEYPOT STATUS">
+      <CyberpunkCard maxWidth="max-w-none" title="HONEYPOT STATUS">
         <div className="space-y-4">
           {loading ? (
             <div className="text-center text-gray-400 py-8">Loading honeypots...</div>
@@ -192,7 +192,7 @@ const HoneypotMonitor = () => {
 
       {/* Recent Attacks + Defender Copilot */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <CyberpunkCard title="RECENT ATTACKS">
+      <CyberpunkCard maxWidth="max-w-none" title="RECENT ATTACKS">
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {recentAttacks.length === 0 ? (
             <div className="text-center text-gray-400 py-8">No attacks detected yet</div>

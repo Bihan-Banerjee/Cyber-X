@@ -111,7 +111,7 @@ const CommandCenter = () => {
 
       {/* threat feed + copilot */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <CyberpunkCard title="LIVE THREAT FEED">
+        <CyberpunkCard maxWidth="max-w-none" title="LIVE THREAT FEED">
           <div className="space-y-2 max-h-[28rem] overflow-y-auto">
             {attacks.length === 0 ? (
               <Empty msg="No live attacks. Start the honeypot stack to populate the feed." />
@@ -144,7 +144,7 @@ const CommandCenter = () => {
       </div>
 
       {/* recent tool activity */}
-      <CyberpunkCard title="RECENT TOOL ACTIVITY">
+      <CyberpunkCard maxWidth="max-w-none" title="RECENT TOOL ACTIVITY">
         {tools.length === 0 ? (
           <Empty msg={toolsNote ?? "No recent tool runs."} />
         ) : (
