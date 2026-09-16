@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface AuthTest {
   category: string;
@@ -397,6 +398,8 @@ export async function performAuthCheck(
   timeoutMs: number = 15000
 ): Promise<AuthCheckResult> {
   const startTime = performance.now();
+
+  assertUrlAllowed(/^https?:\/\//i.test(target) ? target : 'https://' + target);   // SSRF guard
 
   const tests: AuthTest[] = [];
 

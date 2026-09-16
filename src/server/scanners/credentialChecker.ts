@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface CredentialResult {
   username: string;
@@ -123,6 +124,7 @@ export async function checkCredentials(
 ): Promise<CheckResult> {
   const start = performance.now();
   logToolActivity('Credential Checker', `Testing ${credentials.length} credentials against ${target}`, 'warning');
+  assertUrlAllowed(/^https?:\/\//i.test(target) ? target : 'https://' + target);   // SSRF guard
 
   // Cap at 20 credentials
   const creds = credentials.slice(0, 20);

@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface SQLiResult {
   url: string;
@@ -83,6 +84,7 @@ export async function performSQLiTest(
 ): Promise<SQLiResult> {
   const start = performance.now();
   logToolActivity('SQL Injection Tester', `Testing ${url} param: ${parameter}`, 'info');
+  assertUrlAllowed(url);   // SSRF guard: refuse private/loopback/metadata targets
 
   const recommendations = [
     'Use parameterized queries / prepared statements.',

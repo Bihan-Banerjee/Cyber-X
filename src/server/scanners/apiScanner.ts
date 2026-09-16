@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface Vulnerability {
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
@@ -319,6 +320,7 @@ export async function performAPIScan(
   const startTime = performance.now();
 
   const baseURL = target.endsWith('/') ? target.slice(0, -1) : target;
+  assertUrlAllowed(/^https?:\/\//i.test(baseURL) ? baseURL : 'https://' + baseURL);   // SSRF guard
   
   // Common API endpoints to test
   const endpointsToTest = [

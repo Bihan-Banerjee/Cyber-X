@@ -491,9 +491,9 @@ const EmailBreachChecker = () => {
                         </div>
                       </div>
 
-                      <p className="text-sm text-gray-400 mb-3" 
-                         dangerouslySetInnerHTML={{ __html: breach.description.substring(0, 200) + '...' }} 
-                      />
+                      <p className="text-sm text-gray-400 mb-3">
+                        {breach.description.replace(/<[^>]*>/g, '').substring(0, 200) + '...'}
+                      </p>
 
                       <div>
                         <p className="text-xs text-gray-500 mb-2">Compromised Data:</p>
