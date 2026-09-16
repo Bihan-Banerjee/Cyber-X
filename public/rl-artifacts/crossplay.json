@@ -1,0 +1,163 @@
+{
+  "row_labels": [
+    "att_12",
+    "att_17",
+    "att_22",
+    "att_27",
+    "att_best",
+    "att_final",
+    "random_att",
+    "scripted_att",
+    "expert_att"
+  ],
+  "col_labels": [
+    "def_12",
+    "def_17",
+    "def_22",
+    "def_27",
+    "def_best",
+    "def_final",
+    "random_def",
+    "scripted_def",
+    "expert_def"
+  ],
+  "matrix": [
+    [
+      0.25,
+      0.35,
+      0.4,
+      0.3,
+      0.3,
+      0.15,
+      0.9,
+      0.4,
+      0.4
+    ],
+    [
+      0.95,
+      0.85,
+      0.6,
+      0.6,
+      0.55,
+      0.6,
+      1.0,
+      0.7,
+      0.85
+    ],
+    [
+      0.9,
+      0.85,
+      0.6,
+      0.6,
+      0.55,
+      0.75,
+      0.95,
+      0.9,
+      0.85
+    ],
+    [
+      0.9,
+      0.85,
+      0.6,
+      0.6,
+      0.65,
+      0.65,
+      1.0,
+      0.85,
+      0.7
+    ],
+    [
+      0.95,
+      0.9,
+      0.65,
+      0.7,
+      0.35,
+      0.75,
+      1.0,
+      0.65,
+      0.75
+    ],
+    [
+      0.75,
+      0.9,
+      0.9,
+      0.9,
+      0.6,
+      0.75,
+      1.0,
+      0.75,
+      0.75
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.1,
+      0.0,
+      0.0
+    ],
+    [
+      0.9,
+      0.85,
+      0.6,
+      0.6,
+      0.55,
+      0.5,
+      1.0,
+      0.85,
+      0.7
+    ],
+    [
+      0.4,
+      0.5,
+      0.3,
+      0.15,
+      0.4,
+      0.35,
+      0.95,
+      0.5,
+      0.5
+    ]
+  ],
+  "episodes_per_cell": 20,
+  "nash": {
+    "value_att_win_rate": 0.6428,
+    "attacker_support": {
+      "att_27": 0.853,
+      "att_final": 0.147
+    },
+    "defender_support": {
+      "def_22": 0.138,
+      "def_best": 0.862
+    }
+  },
+  "transitivity": {
+    "violations": 3,
+    "pairs_compared": 36,
+    "violation_rate": 0.083,
+    "examples": [
+      {
+        "ranked_higher": "att_22",
+        "ranked_lower": "att_best",
+        "cols_won_by_higher": 3,
+        "cols_won_by_lower": 5
+      },
+      {
+        "ranked_higher": "att_27",
+        "ranked_lower": "att_best",
+        "cols_won_by_higher": 2,
+        "cols_won_by_lower": 6
+      },
+      {
+        "ranked_higher": "att_17",
+        "ranked_lower": "att_best",
+        "cols_won_by_higher": 3,
+        "cols_won_by_lower": 4
+      }
+    ]
+  },
+  "note": "Cross-play over archived checkpoints. A Nash support wider than one agent, or a non-zero violation rate, means the population is non-transitive and Elo alone is misleading."
+}
