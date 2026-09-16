@@ -4,9 +4,10 @@
       "tag": "pfsp",
       "seeds": [
         1,
-        2
+        2,
+        3
       ],
-      "n_runs": 2,
+      "n_runs": 3,
       "missing_seeds": [],
       "runs": [
         {
@@ -17,8 +18,13 @@
           "att_win_rate": 0.642,
           "def_win_rate": 0.358,
           "nashconv": 0.32,
+          "nashconv_tail": 0.053,
           "att_gap": 0.22,
-          "def_gap": 0.1
+          "def_gap": 0.1,
+          "att_gap_tail": 0.04,
+          "def_gap_tail": 0.013,
+          "br_iterations": 12,
+          "probe_converged": false
         },
         {
           "seed": 2,
@@ -28,68 +34,122 @@
           "att_win_rate": 0.596,
           "def_win_rate": 0.404,
           "nashconv": 0.4,
+          "nashconv_tail": 0.24,
           "att_gap": 0.08,
-          "def_gap": 0.32
+          "def_gap": 0.32,
+          "att_gap_tail": 0.007,
+          "def_gap_tail": 0.233,
+          "br_iterations": 12,
+          "probe_converged": false
+        },
+        {
+          "seed": 3,
+          "dir": "D:\\EXTRA\\Cyber-X\\src\\server\\rl\\models\\cyberx_marl\\results\\pfsp_seed3",
+          "found": true,
+          "iterations": 30,
+          "att_win_rate": 0.596,
+          "def_win_rate": 0.404,
+          "nashconv": 0.32,
+          "nashconv_tail": 0.187,
+          "att_gap": 0.04,
+          "def_gap": 0.28,
+          "att_gap_tail": -0.06,
+          "def_gap_tail": 0.187,
+          "br_iterations": 12,
+          "probe_converged": false
         }
       ],
       "att_win_rate": {
-        "mean": 0.619,
-        "iqm": 0.619,
-        "std": 0.023,
-        "n": 2,
+        "mean": 0.6113,
+        "iqm": 0.6113,
+        "std": 0.0217,
+        "n": 3,
         "ci95": {
           "lo": 0.596,
           "hi": 0.642
         }
       },
       "def_win_rate": {
-        "mean": 0.381,
-        "iqm": 0.381,
-        "std": 0.023,
-        "n": 2,
+        "mean": 0.3887,
+        "iqm": 0.3887,
+        "std": 0.0217,
+        "n": 3,
         "ci95": {
           "lo": 0.358,
           "hi": 0.404
         }
       },
       "nashconv": {
-        "mean": 0.36,
-        "iqm": 0.36,
-        "std": 0.04,
-        "n": 2,
+        "mean": 0.3467,
+        "iqm": 0.3467,
+        "std": 0.0377,
+        "n": 3,
         "ci95": {
           "lo": 0.32,
           "hi": 0.4
         }
       },
-      "att_gap": {
-        "mean": 0.15,
-        "iqm": 0.15,
-        "std": 0.07,
-        "n": 2,
+      "nashconv_tail": {
+        "mean": 0.16,
+        "iqm": 0.16,
+        "std": 0.0787,
+        "n": 3,
         "ci95": {
-          "lo": 0.08,
+          "lo": 0.053,
+          "hi": 0.24
+        }
+      },
+      "att_gap": {
+        "mean": 0.1133,
+        "iqm": 0.1133,
+        "std": 0.0772,
+        "n": 3,
+        "ci95": {
+          "lo": 0.04,
           "hi": 0.22
         }
       },
       "def_gap": {
-        "mean": 0.21,
-        "iqm": 0.21,
-        "std": 0.11,
-        "n": 2,
+        "mean": 0.2333,
+        "iqm": 0.2333,
+        "std": 0.0957,
+        "n": 3,
         "ci95": {
           "lo": 0.1,
           "hi": 0.32
         }
-      }
+      },
+      "att_gap_tail": {
+        "mean": -0.0043,
+        "iqm": -0.0043,
+        "std": 0.0416,
+        "n": 3,
+        "ci95": {
+          "lo": -0.06,
+          "hi": 0.04
+        }
+      },
+      "def_gap_tail": {
+        "mean": 0.1443,
+        "iqm": 0.1443,
+        "std": 0.0947,
+        "n": 3,
+        "ci95": {
+          "lo": 0.013,
+          "hi": 0.233
+        }
+      },
+      "br_iterations": 12,
+      "probe_converged_all": false
     },
     {
       "tag": "uniform",
       "seeds": [
         1,
-        2
+        2,
+        3
       ],
-      "n_runs": 2,
+      "n_runs": 3,
       "missing_seeds": [],
       "runs": [
         {
@@ -100,8 +160,13 @@
           "att_win_rate": 0.552,
           "def_win_rate": 0.448,
           "nashconv": 0.26,
+          "nashconv_tail": 0.12,
           "att_gap": 0.26,
-          "def_gap": 0.0
+          "def_gap": 0.0,
+          "att_gap_tail": 0.12,
+          "def_gap_tail": -0.047,
+          "br_iterations": 12,
+          "probe_converged": false
         },
         {
           "seed": 2,
@@ -111,60 +176,113 @@
           "att_win_rate": 0.576,
           "def_win_rate": 0.424,
           "nashconv": 0.38,
+          "nashconv_tail": 0.166,
           "att_gap": 0.2,
-          "def_gap": 0.18
+          "def_gap": 0.18,
+          "att_gap_tail": 0.053,
+          "def_gap_tail": 0.113,
+          "br_iterations": 12,
+          "probe_converged": false
+        },
+        {
+          "seed": 3,
+          "dir": "D:\\EXTRA\\Cyber-X\\src\\server\\rl\\models\\cyberx_marl\\results\\uniform_seed3",
+          "found": true,
+          "iterations": 30,
+          "att_win_rate": 0.624,
+          "def_win_rate": 0.376,
+          "nashconv": 0.52,
+          "nashconv_tail": 0.413,
+          "att_gap": 0.44,
+          "def_gap": 0.08,
+          "att_gap_tail": 0.393,
+          "def_gap_tail": 0.02,
+          "br_iterations": 12,
+          "probe_converged": false
         }
       ],
       "att_win_rate": {
-        "mean": 0.564,
-        "iqm": 0.564,
-        "std": 0.012,
-        "n": 2,
+        "mean": 0.584,
+        "iqm": 0.584,
+        "std": 0.0299,
+        "n": 3,
         "ci95": {
           "lo": 0.552,
-          "hi": 0.576
+          "hi": 0.624
         }
       },
       "def_win_rate": {
-        "mean": 0.436,
-        "iqm": 0.436,
-        "std": 0.012,
-        "n": 2,
+        "mean": 0.416,
+        "iqm": 0.416,
+        "std": 0.0299,
+        "n": 3,
         "ci95": {
-          "lo": 0.424,
+          "lo": 0.376,
           "hi": 0.448
         }
       },
       "nashconv": {
-        "mean": 0.32,
-        "iqm": 0.32,
-        "std": 0.06,
-        "n": 2,
+        "mean": 0.3867,
+        "iqm": 0.3867,
+        "std": 0.1062,
+        "n": 3,
         "ci95": {
           "lo": 0.26,
-          "hi": 0.38
+          "hi": 0.52
+        }
+      },
+      "nashconv_tail": {
+        "mean": 0.233,
+        "iqm": 0.233,
+        "std": 0.1287,
+        "n": 3,
+        "ci95": {
+          "lo": 0.12,
+          "hi": 0.413
         }
       },
       "att_gap": {
-        "mean": 0.23,
-        "iqm": 0.23,
-        "std": 0.03,
-        "n": 2,
+        "mean": 0.3,
+        "iqm": 0.3,
+        "std": 0.102,
+        "n": 3,
         "ci95": {
           "lo": 0.2,
-          "hi": 0.26
+          "hi": 0.44
         }
       },
       "def_gap": {
-        "mean": 0.09,
-        "iqm": 0.09,
-        "std": 0.09,
-        "n": 2,
+        "mean": 0.0867,
+        "iqm": 0.0867,
+        "std": 0.0736,
+        "n": 3,
         "ci95": {
           "lo": 0.0,
           "hi": 0.18
         }
-      }
+      },
+      "att_gap_tail": {
+        "mean": 0.1887,
+        "iqm": 0.1887,
+        "std": 0.1471,
+        "n": 3,
+        "ci95": {
+          "lo": 0.053,
+          "hi": 0.393
+        }
+      },
+      "def_gap_tail": {
+        "mean": 0.0287,
+        "iqm": 0.0287,
+        "std": 0.0656,
+        "n": 3,
+        "ci95": {
+          "lo": -0.047,
+          "hi": 0.113
+        }
+      },
+      "br_iterations": 12,
+      "probe_converged_all": false
     }
   ]
 }

@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-09-15T10:56:27.974991+00:00",
+  "generated_at": "2026-09-15T17:33:28.213564+00:00",
   "source_run": "pfsp_seed1",
   "n_iterations": 30,
   "nashconv": {
-    "mean": 0.35,
-    "std": 0.059
+    "mean": 0.363,
+    "std": 0.073
   },
   "regenerated": {
     "demo": true,
@@ -20,8 +20,8 @@
       "bytes": 2055
     },
     "exploitability.json": {
-      "sha256": "bee43d058b379045b5318c3dd9d6a3bcf0689370e62224d10fa1b66f99017e11",
-      "bytes": 3038
+      "sha256": "8e55fabbcf35a47fd133ac70a664ba9a88b916d427c94848ce0fb6bf8c89cb41",
+      "bytes": 3603
     },
     "leaderboard.json": {
       "sha256": "0c9a2b6a7a62698fcf78db913819fbc19ec8a1e721f8e01d454570adf76d43f3",
@@ -44,8 +44,8 @@
       "bytes": 10836
     },
     "sweep_comparison.json": {
-      "sha256": "3c893b10c831c13e192d2b49a4a9d7cced9d61f57384a97a0afed700dc3ea8ed",
-      "bytes": 3680
+      "sha256": "9aaa6c93d77b56ead27d69d8e2ec13525209d66274f4ac11bd4eb9ea5a9533d5",
+      "bytes": 6812
     },
     "training_curves.png": {
       "sha256": "ff3f5305934aa40f41c28b9af3f90dc29d9a4c7d06b29f3e84a3b2780adf8fcb",
