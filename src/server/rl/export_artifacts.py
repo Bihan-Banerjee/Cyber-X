@@ -21,6 +21,8 @@ Outputs (under public/rl-artifacts/):
     demo_episode.json      – recorded best-vs-best episode      (--demo / --all)
     shadow_eval.json       – shadow-mode evaluation report      (--shadow / --all)
     copilot_sample.json    – recorded Copilot suggestions       (--shadow / --all)
+    crossplay.json         – N x N cross-play matrix + empirical Nash (if the run
+                             has a crossplay_report.json from crossplay.py)
     manifest.json          – provenance, timestamp, sha256 per file
 
 `--all` regenerates everything. Partial regeneration is how the committed set
@@ -314,7 +316,19 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"  (shadow recording skipped: {exc})")
 
-    # 7. manifest / provenance — checksum every file so a stale or hand-edited
+    # 7. cross-play matrix + empirical Nash (if crossplay.py has been run on
+    #    this run). Baked so the RL Arena heatmap renders on the cold site.
+    crossplay_src = os.path.join(run_dir, "crossplay_report.json")
+    if os.path.exists(crossplay_src):
+        with open(crossplay_src) as f:
+            crossplay = json.load(f)
+        with open(os.path.join(_PUBLIC_DIR, "crossplay.json"), "w") as f:
+            json.dump(crossplay, f, indent=2)
+    else:
+        print("  (crossplay.json skipped: run crossplay.py --run-dir "
+              f"{run_dir} first)")
+
+    # 8. manifest / provenance — checksum every file so a stale or hand-edited
     #    artifact is detectable instead of silently shipping.
     files = {}
     for name in sorted(os.listdir(_PUBLIC_DIR)):
