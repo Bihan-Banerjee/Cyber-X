@@ -54,12 +54,29 @@ interface SweepArmAgg {
 }
 interface SweepComparison { arms: SweepArmAgg[]; illustrative?: boolean; }
 
+// N x N cross-play matrix + empirical Nash written by crossplay.py. matrix[r][c]
+// is the attacker (row r) win rate vs the defender (col c). A Nash support wider
+// than one agent, or any transitivity violation, means the population is
+// non-transitive — a single "best" checkpoint (and Elo) is misleading.
+interface CrossPlayReport {
+  row_labels: string[]; col_labels: string[]; matrix: number[][];
+  episodes_per_cell?: number;
+  nash: {
+    value_att_win_rate: number;
+    attacker_support: Record<string, number>;
+    defender_support: Record<string, number>;
+  };
+  transitivity?: { violations: number; pairs_compared: number; violation_rate: number };
+  note?: string; illustrative?: boolean;
+}
+
 const RLArena = () => {
   const [history, setHistory] = useState<MetricsHistory | null>(null);
   const [exploit, setExploit] = useState<ExploitabilityReport | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
   const [shadow, setShadow] = useState<ShadowEvalReport | null>(null);
   const [sweep, setSweep] = useState<SweepComparison | null>(null);
+  const [crossplay, setCrossplay] = useState<CrossPlayReport | null>(null);
   const [source, setSource] = useState<RLSource>("replay");
 
   useEffect(() => {
@@ -89,6 +106,11 @@ const RLArena = () => {
         const sw = await fetchRL<SweepComparison>(
           "/api/rl/sweep_comparison", "sweep_comparison.json");
         setSweep(sw.data);
+      } catch { /* leave empty */ }
+      try {
+        const cp = await fetchRL<CrossPlayReport>(
+          "/api/rl/crossplay", "crossplay.json");
+        setCrossplay(cp.data);
       } catch { /* leave empty */ }
     })();
   }, []);
@@ -150,6 +172,13 @@ const RLArena = () => {
       {sweep && sweep.arms && sweep.arms.length >= 2 && (
         <CyberpunkCard title="PFSP vs UNIFORM — DEFENDER EXPLOITABILITY (BEFORE / AFTER)">
           <SweepComparisonPanel sweep={sweep} />
+        </CyberpunkCard>
+      )}
+
+      {/* Cross-play matrix + empirical Nash — why Elo/single-best is misleading */}
+      {crossplay && crossplay.matrix && crossplay.matrix.length > 0 && (
+        <CyberpunkCard title="CROSS-PLAY MATRIX & EMPIRICAL NASH">
+          <CrossPlayPanel cp={crossplay} />
         </CyberpunkCard>
       )}
 
@@ -713,6 +742,124 @@ const SweepComparisonPanel = ({ sweep }: { sweep: SweepComparison }) => {
           </span>
         </div>
       )}
+    </div>
+  );
+};
+
+// Diverging heatmap centred on an even game (0.5): red = attacker-favoured,
+// cyan = defender-favoured; cells near 0.5 stay dark.
+const cellBg = (w: number) =>
+  w >= 0.5
+    ? `rgba(239,68,68,${((w - 0.5) * 2 * 0.8).toFixed(3)})`
+    : `rgba(34,211,238,${((0.5 - w) * 2 * 0.8).toFixed(3)})`;
+const shortLabel = (l: string) => l.replace(/^(att|def)_/, "");
+
+const CrossPlayPanel = ({ cp }: { cp: CrossPlayReport }) => {
+  const t = cp.transitivity;
+  const attSup = Object.entries(cp.nash?.attacker_support ?? {});
+  const defSup = Object.entries(cp.nash?.defender_support ?? {});
+  const mixed = attSup.length > 1 || defSup.length > 1;
+  const nCols = cp.col_labels.length;
+  return (
+    <div className="space-y-4">
+      {cp.illustrative && (
+        <div className="text-[11px] text-yellow-500/80 border border-yellow-500/30 rounded px-3 py-1.5">
+          Illustrative sample — run crossplay.py --run-dir &lt;run&gt; for real numbers.
+        </div>
+      )}
+      <p className="text-xs text-gray-400">
+        Attacker win rate for every archived attacker (rows) against every defender (cols).
+        A Nash mixture wider than one agent, or any transitivity violation, means the
+        population is non-transitive — a single "best" checkpoint (and Elo) is misleading.
+      </p>
+
+      {/* Heatmap */}
+      <div className="overflow-x-auto">
+        <div
+          className="inline-grid gap-px text-[10px] font-mono"
+          style={{ gridTemplateColumns: `auto repeat(${nCols}, 2.2rem)` }}
+        >
+          <div />
+          {cp.col_labels.map((c) => (
+            <div key={c} className="text-gray-500 text-center pb-1" title={c}>
+              {shortLabel(c)}
+            </div>
+          ))}
+          {cp.matrix.flatMap((rowVals, ri) => [
+            <div
+              key={`r${ri}`}
+              className="text-gray-500 pr-2 text-right self-center whitespace-nowrap"
+              title={cp.row_labels[ri]}
+            >
+              {shortLabel(cp.row_labels[ri])}
+            </div>,
+            ...rowVals.map((w, ci) => (
+              <div
+                key={`c${ri}-${ci}`}
+                className="h-8 flex items-center justify-center rounded-sm text-gray-100"
+                style={{ background: cellBg(w) }}
+                title={`${cp.row_labels[ri]} vs ${cp.col_labels[ci]}: ${(w * 100).toFixed(0)}% attacker win`}
+              >
+                {Math.round(w * 100)}
+              </div>
+            )),
+          ])}
+        </div>
+      </div>
+      <div className="flex items-center gap-3 text-[10px] text-gray-500">
+        <span className="text-cyber-cyan">defender wins</span>
+        <span>0 — 50 — 100</span>
+        <span className="text-red-400">attacker wins</span>
+        <span className="ml-auto">{cp.episodes_per_cell ?? "?"} eps/cell</span>
+      </div>
+
+      {/* Empirical Nash + transitivity */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="glass-panel rounded p-4">
+          <div className="text-[11px] text-gray-400 mb-2">
+            Empirical Nash — attacker wins{" "}
+            <span className="text-gray-200">
+              {(cp.nash.value_att_win_rate * 100).toFixed(0)}%
+            </span>{" "}
+            at equilibrium
+          </div>
+          <div className="text-[10px] text-gray-500 mb-1">Attacker support</div>
+          <div className="flex flex-wrap gap-1 mb-2">
+            {attSup.map(([k, v]) => (
+              <span key={k}
+                className="px-2 py-0.5 rounded bg-red-500/15 text-red-300 text-[10px] font-mono">
+                {shortLabel(k)} {(v * 100).toFixed(0)}%
+              </span>
+            ))}
+          </div>
+          <div className="text-[10px] text-gray-500 mb-1">Defender support</div>
+          <div className="flex flex-wrap gap-1">
+            {defSup.map(([k, v]) => (
+              <span key={k}
+                className="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[10px] font-mono">
+                {shortLabel(k)} {(v * 100).toFixed(0)}%
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="glass-panel rounded p-4">
+          <div className="text-[11px] text-gray-400 mb-2">Transitivity</div>
+          <div className="text-2xl font-bold text-fuchsia-300">
+            {t ? `${t.violations}/${t.pairs_compared}` : "—"}
+            {t && (
+              <span className="text-sm text-gray-500 ml-1">
+                ({(t.violation_rate * 100).toFixed(0)}%)
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] text-gray-400 mt-1">
+            non-transitive pairs{" "}
+            {mixed
+              ? "— the Nash needs a mixture, so no single checkpoint is 'best'."
+              : "— the population is essentially transitive here."}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
