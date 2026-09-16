@@ -306,6 +306,25 @@ def get_sweep_comparison():
     return jsonify(report)
 
 
+@app.route("/api/rl/crossplay", methods=["GET"])
+def get_crossplay():
+    """Cross-play matrix + empirical Nash written by crossplay.py --out
+    <run>/crossplay_report.json (N x N win rates over archived checkpoints,
+    Nash-averaged support, transitivity violations). 404 when none exists yet
+    -> the frontend falls back to the baked artifact, same as every other RL read."""
+    results_root = os.path.abspath(_RESULTS_DIR)
+    report = _read_json(os.path.join(results_root, "crossplay_report.json"), None)
+    if report is None:
+        matches = glob.glob(
+            os.path.join(results_root, "**", "crossplay_report.json"),
+            recursive=True)
+        if matches:
+            report = _read_json(max(matches, key=os.path.getmtime), None)
+    if report is None:
+        return jsonify({"error": "no cross-play report yet"}), 404
+    return jsonify(report)
+
+
 @app.route("/api/rl/health", methods=["GET"])
 def get_health():
     """What this API is actually serving. The dashboards degrade silently when a
