@@ -101,10 +101,17 @@ const RedVsBlue = () => {
             pausing = true;                 // brief pause, then loop the demo
             setTimeout(() => {
               if (cancelled) return;
-              setSteps([]); setResults([]); i = 0; pausing = false;
+              // Restart WITHOUT blanking to []: jumping straight to the first step
+              // keeps the panels, meters, breakdowns and log mounted, so the page
+              // no longer collapses to the empty "waiting" state and flickers on
+              // every loop. The outcome strip stays until the match completes again.
+              setSteps(list.length ? [list[0]] : []);
+              i = 1;
+              pausing = false;
             }, 2500);
           }
         };
+        if (replayTimer.current) clearInterval(replayTimer.current);
         replayTimer.current = setInterval(tick, REPLAY_STEP_MS);
       } catch {
         if (!cancelled) setError("No live match and no replay sample available.");
