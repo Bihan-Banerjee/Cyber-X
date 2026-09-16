@@ -147,7 +147,7 @@ const RLArena = () => {
       <TrainingControl source={source} />
 
       {/* Convergence curves */}
-      <CyberpunkCard title="CONVERGENCE">
+      <CyberpunkCard maxWidth="max-w-none" title="CONVERGENCE">
         {history && history.iterations.length ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="h-72">
@@ -163,7 +163,7 @@ const RLArena = () => {
       </CyberpunkCard>
 
       {/* Exploitability */}
-      <CyberpunkCard title="EXPLOITABILITY / NASHCONV">
+      <CyberpunkCard maxWidth="max-w-none" title="EXPLOITABILITY / NASHCONV">
         {exploit ? (
           <ExploitabilityPanel report={exploit} />
         ) : (
@@ -173,20 +173,20 @@ const RLArena = () => {
 
       {/* PFSP vs uniform — the headline before/after */}
       {sweep && sweep.arms && sweep.arms.length >= 2 && (
-        <CyberpunkCard title="PFSP vs UNIFORM — EXPLOITABILITY (BEFORE / AFTER)">
+        <CyberpunkCard maxWidth="max-w-none" title="PFSP vs UNIFORM — EXPLOITABILITY (BEFORE / AFTER)">
           <SweepComparisonPanel sweep={sweep} />
         </CyberpunkCard>
       )}
 
       {/* Cross-play matrix + empirical Nash — why Elo/single-best is misleading */}
       {crossplay && crossplay.matrix && crossplay.matrix.length > 0 && (
-        <CyberpunkCard title="CROSS-PLAY MATRIX & EMPIRICAL NASH">
+        <CyberpunkCard maxWidth="max-w-none" title="CROSS-PLAY MATRIX & EMPIRICAL NASH">
           <CrossPlayPanel cp={crossplay} />
         </CyberpunkCard>
       )}
 
       {/* Shadow-mode evaluation (Phase D) */}
-      <CyberpunkCard title="SHADOW-MODE EVALUATION">
+      <CyberpunkCard maxWidth="max-w-none" title="SHADOW-MODE EVALUATION">
         {shadow ? (
           <ShadowPanel report={shadow} />
         ) : (
@@ -196,7 +196,7 @@ const RLArena = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Leaderboard */}
-        <CyberpunkCard title="ELO LEADERBOARD">
+        <CyberpunkCard maxWidth="max-w-none" title="ELO LEADERBOARD">
           {board.length ? (
             <div className="space-y-1">
               {board.map((e, i) => (
@@ -221,7 +221,7 @@ const RLArena = () => {
       </div>
 
       {/* Full training plot */}
-      <CyberpunkCard title="FULL TRAINING PROGRESS">
+      <CyberpunkCard maxWidth="max-w-none" title="FULL TRAINING PROGRESS">
         <img
           src={source === "live" ? rlPlotUrl() : rlArtifactPlotUrl()}
           alt="Training progress"
@@ -275,7 +275,7 @@ const TrainingControl = ({ source }: { source: RLSource }) => {
   };
 
   return (
-    <CyberpunkCard title="TRAINING CONTROL">
+    <CyberpunkCard maxWidth="max-w-none" title="TRAINING CONTROL">
       {source === "replay" ? (
         <p className="text-sm text-gray-400">
           Viewing a baked snapshot. Start the local RL stack
@@ -560,7 +560,7 @@ const DemoPlayer = ({ source }: { source: RLSource }) => {
   const end = events.find((e) => e.type === "episode_end");
 
   return (
-    <CyberpunkCard title="BEST-VS-BEST DEMO">
+    <CyberpunkCard maxWidth="max-w-none" title="BEST-VS-BEST DEMO">
       <div className="space-y-4">
         <div className="flex flex-wrap gap-2 items-center">
           <button onClick={loadRecorded}

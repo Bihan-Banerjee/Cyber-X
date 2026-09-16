@@ -278,7 +278,7 @@ const RedVsBlue = () => {
 
       {/* Detection race chart */}
       {epSteps.length > 1 && (
-        <CyberpunkCard title="DETECTION RACE">
+        <CyberpunkCard maxWidth="max-w-none" title="DETECTION RACE">
           <p className="text-xs text-gray-400 mb-3">
             The core cat-and-mouse: the attacker's <span className="text-red-400">suspicion</span> (noise it
             generates) vs the defender's <span className="text-cyber-cyan">evidence</span>. The defender can
@@ -358,7 +358,7 @@ const RedVsBlue = () => {
       )}
 
       {/* Step log */}
-      <CyberpunkCard title="MATCH LOG">
+      <CyberpunkCard maxWidth="max-w-none" title="MATCH LOG">
         {safeSteps.length ? (
           <div className="max-h-96 overflow-y-auto space-y-1 font-mono text-xs">
             {safeSteps.slice().reverse().map((s, idx) => (
@@ -523,7 +523,7 @@ const OutOfClassCard = ({ probe }: { probe: ProbeResult }) => {
   const txtColor = { fuchsia: "text-fuchsia-300", red: "text-red-400", gray: "text-gray-300" };
   const delta = probe.out_of_class_delta;
   return (
-    <CyberpunkCard title="OUT-OF-CLASS EXPLOITABILITY">
+    <CyberpunkCard maxWidth="max-w-none" title="OUT-OF-CLASS EXPLOITABILITY">
       {probe.illustrative && (
         <div className="text-[11px] text-yellow-500/80 border border-yellow-500/30 rounded px-3 py-1.5 mb-3">
           Illustrative sample — run `python -m red_team.probe --run-dir &lt;best run&gt; --llm

@@ -532,7 +532,7 @@ const Tools = () => {
 
   return (
     <>
-      <CyberpunkCard title="SECURITY TOOLS">
+      <CyberpunkCard maxWidth="max-w-7xl" title="SECURITY TOOLS">
         <div className="space-y-6">
           {/* Controls Section */}
           <div className="space-y-3">

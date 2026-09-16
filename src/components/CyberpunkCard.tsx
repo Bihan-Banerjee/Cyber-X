@@ -4,11 +4,15 @@ interface CyberpunkCardProps {
   title: string;
   children?: ReactNode;
   className?: string;
+  /** Tailwind max-w-* class capping the card width. Standalone tool pages keep
+   *  the default readable column; dashboard/section cards pass "max-w-none" to
+   *  fill their (already width-capped) page container for a symmetric layout. */
+  maxWidth?: string;
 }
 
-const CyberpunkCard = ({ title, children, className = "" }: CyberpunkCardProps) => {
+const CyberpunkCard = ({ title, children, className = "", maxWidth = "max-w-3xl" }: CyberpunkCardProps) => {
   return (
-    <div className={`relative w-full max-w-3xl mt-12 mb-8 opacity-95 ${className}`}>
+    <div className={`relative w-full ${maxWidth} mt-12 mb-8 opacity-95 ${className}`}>
       {/* Top decorative line */}
       <div className="absolute -top-2 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-cyber-red to-transparent" />
       
