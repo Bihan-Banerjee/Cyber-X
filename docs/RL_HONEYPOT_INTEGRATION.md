@@ -144,7 +144,7 @@ and shows a **REPLAY** badge instead of **LIVE**.
 | [`shared_honeypot_env.py`](../src/server/rl/shared_honeypot_env.py) | The MARL environment (the game). `DEF_ACTION_NAMES` defines the action order the map relies on. |
 | [`export_artifacts.py`](../src/server/rl/export_artifacts.py) | Snapshots a real run into `public/rl-artifacts/` (history, exploitability, leaderboard, training plot, **`--demo`** recorded episode). |
 | [`shadow_eval.py`](../src/server/rl/shadow_eval.py) | Offline shadow-mode evaluation: replay a honeypot window through the trained defender vs an analyst heuristic. The paper's Phase-D result. |
-| [`tests_rl.py`](../src/server/rl/tests_rl.py) | 17 self-tests (run after any env/RL change). |
+| [`tests_rl.py`](../src/server/rl/tests_rl.py) | 22 self-tests (run after any env/RL change). |
 | [`requirements.txt`](../src/server/rl/requirements.txt) | Python deps (torch, sb3-contrib, gymnasium, flask, …). |
 
 ### 3.4 Committed artifacts ([`public/rl-artifacts/`](../public/rl-artifacts))
@@ -305,14 +305,67 @@ cd D:\EXTRA\Cyber-X\docker
 docker compose -f docker-compose.honeypot.yml down
 ```
 
+### Tier 3b - Autonomous red-team + grounding (the self-labeled sim->real loop)
+
+Tier 3 drives Cowrie by hand. This variant uses the autonomous red-team driver so
+every event is self-labeled (the agent chose each TTP), then scores the trained
+defender on that real telemetry and grounds the env's brute-force params in it. It
+is the sim->real *evidence* loop, not just a demo.
+
+Bring up ONLY the three services the loop needs. Do NOT `up` the full stack while a
+host Ollama is running: the compose file publishes its own Ollama on 11434 and the
+two will collide.
+```powershell
+cd D:\EXTRA\Cyber-X\docker
+docker compose -f docker-compose.honeypot.yml up -d elasticsearch logstash cowrie
+irm http://localhost:9200/_cluster/health     # wait for green/yellow (~1-2 min)
+```
+
+One-time: the SSH driver needs paramiko (the in-sim probe does not).
+```powershell
+D:\EXTRA\Cyber-X\venv\Scripts\python.exe -m pip install paramiko
+```
+
+Preview the ATT&CK playbook (executes nothing), then run the whole loop:
+```powershell
+cd D:\EXTRA\Cyber-X\src\server\rl
+..\..\..\venv\Scripts\python.exe -m red_team.honeypot --dry-run
+..\..\..\venv\Scripts\python.exe -m red_team.honeypot_loop        # add --dry-run to see the plan
+```
+`honeypot_loop` chains: red-team driver (loopback only) -> wait for Logstash ->
+`shadow_eval --es-url --baseline` (baked to `public/rl-artifacts/shadow_eval.json`)
+-> `calibrate --es-url` (Wilson CIs + a `suggested_reward_overrides` block). It
+refuses a non-local target and aborts with a clear message if ES/Cowrie are not up.
+
+Or run the three steps by hand:
+```powershell
+..\..\..\venv\Scripts\python.exe -m red_team.honeypot --host 127.0.0.1 --port 2222 --out session.json
+..\..\..\venv\Scripts\python.exe shadow_eval.py --es-url http://localhost:9200 --window now-1h --baseline --out ..\..\..\public\rl-artifacts\shadow_eval.json
+..\..\..\venv\Scripts\python.exe -m red_team.calibrate --es-url http://localhost:9200 --window now-1h --out calibration.json
+```
+
+Then refresh the manifest and view the RL Arena SHADOW-MODE card:
+```powershell
+..\..\..\venv\Scripts\python.exe export_artifacts.py --run pfsp_seed1
+```
+
+Notes:
+- A short session yields few login events; calibrate may mark `p_brute_min` (or the
+  whole curve) "not grounded" and keep the env default. Run the driver a few times
+  or widen `--window` for a firmer estimate.
+- shadow_eval on real telemetry scores the defender against the documented analyst
+  heuristic (proxy ground truth), same as the synthetic run; the win is that the
+  events are real. The red-team session log also carries per-TTP phase labels for a
+  stricter comparison later (`calibrate --session session.json`).
+
 ---
 
 ## 6. Verifying the RL side (no UI)
 
 ```powershell
-# 17 self-tests (no pytest needed) — run after any RL/env change:
+# 22 self-tests (no pytest needed) — run after any RL/env change:
 cd D:\EXTRA\Cyber-X\src\server\rl
-..\..\..\venv\Scripts\python.exe tests_rl.py        # expect "17 passed, 0 failed"
+..\..\..\venv\Scripts\python.exe tests_rl.py        # expect "22 passed, 0 failed"
 
 # Regenerate dashboard artifacts from a real run (+ recorded demo episode):
 ..\..\..\venv\Scripts\python.exe export_artifacts.py --demo
