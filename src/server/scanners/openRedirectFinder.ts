@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface RedirectResult {
   url: string;
@@ -63,6 +64,7 @@ export async function testOpenRedirect(
 ): Promise<RedirectResult> {
   const start = performance.now();
   logToolActivity('Open Redirect Finder', `Testing ${url} param "${parameter}"`, 'info');
+  assertUrlAllowed(url);   // SSRF guard: refuse private/loopback/metadata targets
 
   let vulnerable = false;
   let redirectedTo: string | undefined;

@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface HttpResponse {
   statusCode: number;
@@ -34,6 +35,8 @@ export async function sendHTTPRequest(
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw new Error('Only HTTP and HTTPS URLs are supported');
   }
+
+  assertUrlAllowed(url);   // SSRF guard: refuse private/loopback/metadata targets
 
   logToolActivity('HTTP Request Builder', `${method} ${url}`, 'info');
 

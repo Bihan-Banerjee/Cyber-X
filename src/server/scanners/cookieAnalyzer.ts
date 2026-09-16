@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface CookieDetail {
   name: string;
@@ -81,6 +82,7 @@ export async function analyzeCookies(url: string, timeoutMs: number = 10000): Pr
   const start = performance.now();
 
   logToolActivity('Cookie Analyzer', `Analyzing cookies for ${url}`, 'info');
+  assertUrlAllowed(url);   // SSRF guard: refuse private/loopback/metadata targets
 
   const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
   const controller = new AbortController();

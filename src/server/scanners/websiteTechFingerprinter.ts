@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface Technology {
   name: string;
@@ -108,6 +109,7 @@ export async function performTechFingerprint(
 ): Promise<TechFingerprintResult> {
   const start = performance.now();
   logToolActivity('Tech Fingerprinter', `Fingerprinting: ${url}`, 'info');
+  assertUrlAllowed(url);   // SSRF guard: refuse private/loopback/metadata targets
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

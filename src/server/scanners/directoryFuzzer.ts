@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface FuzzResult {
   path: string;
@@ -311,6 +312,8 @@ export async function performDirectoryFuzzing(
   }
   // Remove trailing slash
   baseUrl = baseUrl.replace(/\/$/, '');
+
+  assertUrlAllowed(baseUrl);   // SSRF guard: refuse private/loopback/metadata targets
 
   const results: FuzzResult[] = [];
   const batchSize = 10; // Concurrent requests

@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { logToolActivity } from '../utils/activityLogger.js';
+import { assertUrlAllowed } from '../utils/ssrfGuard.js';
 
 export interface RobotsResult {
   domain: string;
@@ -24,6 +25,7 @@ export async function analyzeRobotsTxt(domain: string, timeoutMs: number = 10000
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      assertUrlAllowed(url);   // SSRF guard: refuse private/loopback/metadata targets
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timer);
       if (res.ok) {
