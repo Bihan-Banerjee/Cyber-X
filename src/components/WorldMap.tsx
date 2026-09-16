@@ -7,7 +7,6 @@ import { attackOrigins } from "../data/mapLayers";
 import isoCountries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import "./WorldMap.css";
-import fiveGPointsRaw from "../data/5g_points.json";
 
 isoCountries.registerLocale(enLocale);
 
@@ -19,18 +18,10 @@ const processedCountries = countriesGeoJson.features.map((feature: any) => ({
   iso2: isoCountries.alpha3ToAlpha2(feature.id) || ''
 }));
 
-// Process 5G points once with proper typing
-const fiveGPoints = fiveGPointsRaw
-  .filter((p: any) => p.latitude && p.longitude)
-  .map((p: any) => ({
-    lat: parseFloat(p.latitude),
-    lng: parseFloat(p.longitude),
-    city: p.city_name || 'Unknown',
-    operator: p.operator || 'Unknown',
-    status: p.status || 'Unknown',
-    deployment: p.deployment_type || '5G'
-  }))
-  .filter((p: any) => !isNaN(p.lat) && !isNaN(p.lng));
+interface FiveGPoint {
+  lat: number; lng: number; city: string;
+  operator: string; status: string; deployment: string;
+}
 
 // Create lookup maps outside component
 const signalLookup = broadbandData.reduce((acc: Record<string, number>, c: any) => {
@@ -53,6 +44,35 @@ export default function WorldMap() {
   });
   const [globeReady, setGlobeReady] = useState(false);
   const [hoveredD, setHoveredD] = useState<any>(null);
+
+  // The 5G points dataset is ~35 MB. It is fetched at runtime from /public
+  // instead of being bundled into the JS, so it never weighs down the initial
+  // app load (it downloads only when this map is opened). The full dataset is
+  // preserved; pointsData still downsamples it for rendering.
+  const [fiveGPoints, setFiveGPoints] = useState<FiveGPoint[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/data/5g_points.json")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((raw: any[]) => {
+        if (cancelled || !Array.isArray(raw)) return;
+        setFiveGPoints(
+          raw
+            .filter((p) => p.latitude && p.longitude)
+            .map((p) => ({
+              lat: parseFloat(p.latitude),
+              lng: parseFloat(p.longitude),
+              city: p.city_name || "Unknown",
+              operator: p.operator || "Unknown",
+              status: p.status || "Unknown",
+              deployment: p.deployment_type || "5G",
+            }))
+            .filter((p) => !isNaN(p.lat) && !isNaN(p.lng))
+        );
+      })
+      .catch(() => { /* the map still works without the 5G layer */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // Debounced resize handler
   useEffect(() => {
@@ -149,7 +169,7 @@ export default function WorldMap() {
     }
     
     return fiveGPoints;
-  }, [activeLayer, globeReady]);
+  }, [activeLayer, globeReady, fiveGPoints]);
 
   // Memoized arcs data
   const arcsData = useMemo(() => {
