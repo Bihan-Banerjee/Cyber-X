@@ -50,7 +50,10 @@ interface SweepStat {
 interface SweepArmAgg {
   tag: string; n_runs?: number;
   def_win_rate?: SweepStat; att_win_rate?: SweepStat;
-  def_gap?: SweepStat; nashconv?: SweepStat;
+  def_gap?: SweepStat; att_gap?: SweepStat; nashconv?: SweepStat;
+  // Trailing-plateau (honest) estimators + probe provenance, added by run_sweep.
+  def_gap_tail?: SweepStat; att_gap_tail?: SweepStat; nashconv_tail?: SweepStat;
+  probe_converged_all?: boolean | null; br_iterations?: number | null;
 }
 interface SweepComparison { arms: SweepArmAgg[]; illustrative?: boolean; }
 
@@ -170,7 +173,7 @@ const RLArena = () => {
 
       {/* PFSP vs uniform — the headline before/after */}
       {sweep && sweep.arms && sweep.arms.length >= 2 && (
-        <CyberpunkCard title="PFSP vs UNIFORM — DEFENDER EXPLOITABILITY (BEFORE / AFTER)">
+        <CyberpunkCard title="PFSP vs UNIFORM — EXPLOITABILITY (BEFORE / AFTER)">
           <SweepComparisonPanel sweep={sweep} />
         </CyberpunkCard>
       )}
@@ -696,17 +699,41 @@ const fmtStat = (s?: SweepStat) => {
   return `${s.mean.toFixed(2)}${std}${iqm}${ci}`;
 };
 
+// CIs are disjoint when one interval's low exceeds the other's high (either way).
+const ciSeparated = (a?: SweepStat, b?: SweepStat) => {
+  const al = a?.ci95?.lo, ah = a?.ci95?.hi, bl = b?.ci95?.lo, bh = b?.ci95?.hi;
+  if (al == null || ah == null || bl == null || bh == null) return false;
+  return al > bh || bl > ah;
+};
+const deltaMean = (a?: SweepStat, b?: SweepStat) =>
+  a?.mean != null && b?.mean != null ? a.mean - b.mean : null;
+
 const SweepComparisonPanel = ({ sweep }: { sweep: SweepComparison }) => {
   const byTag = (t: string) => sweep.arms.find((a) => a.tag.toLowerCase().includes(t));
   const pfsp = byTag("pfsp") || sweep.arms[0];
   const uniform = byTag("uniform") || sweep.arms[1];
-  const gp = pfsp?.def_gap?.mean ?? null;
-  const gu = uniform?.def_gap?.mean ?? null;
-  const gapDelta = gp != null && gu != null ? gp - gu : null;
-  const rows = [
-    { label: uniform?.tag ?? "uniform", arm: uniform, tone: "text-gray-300" },
-    { label: pfsp?.tag ?? "pfsp", arm: pfsp, tone: "text-fuchsia-300" },
+  const unconverged = pfsp?.probe_converged_all === false || uniform?.probe_converged_all === false;
+  const br = pfsp?.br_iterations ?? uniform?.br_iterations ?? null;
+
+  // Prefer the honest tail-mean gap; fall back to the max gap for older reports.
+  const attTail = { u: uniform?.att_gap_tail, p: pfsp?.att_gap_tail };
+  const defTail = { u: uniform?.def_gap_tail, p: pfsp?.def_gap_tail };
+  const attDelta = deltaMean(attTail.p, attTail.u);
+  const defDelta = deltaMean(defTail.p, defTail.u);
+  const attSep = ciSeparated(attTail.p, attTail.u);
+  const defSep = ciSeparated(defTail.p, defTail.u);
+
+  // metric rows for the comparison table (lower gap = less exploitable = better)
+  const rows: { label: string; u?: SweepStat; p?: SweepStat; max?: { u?: SweepStat; p?: SweepStat };
+                lowerBetter: boolean }[] = [
+    { label: "Attacker exploitability gap (tail)", u: attTail.u, p: attTail.p,
+      max: { u: uniform?.att_gap, p: pfsp?.att_gap }, lowerBetter: true },
+    { label: "Defender exploitability gap (tail)", u: defTail.u, p: defTail.p,
+      max: { u: uniform?.def_gap, p: pfsp?.def_gap }, lowerBetter: true },
+    { label: "NashConv (tail)", u: uniform?.nashconv_tail, p: pfsp?.nashconv_tail, lowerBetter: true },
+    { label: "Defender win rate", u: uniform?.def_win_rate, p: pfsp?.def_win_rate, lowerBetter: false },
   ];
+
   return (
     <div className="space-y-4">
       {sweep.illustrative && (
@@ -714,32 +741,78 @@ const SweepComparisonPanel = ({ sweep }: { sweep: SweepComparison }) => {
           Illustrative sample — run both arms, then run_sweep.py --compare pfsp uniform for real numbers.
         </div>
       )}
+      {unconverged && (
+        <div className="text-[11px] text-orange-400/90 border border-orange-500/30 rounded px-3 py-1.5">
+          Best-response probe UNCONVERGED (br={br ?? "?"}) — the gaps under-measure exploitability;
+          read the tail-mean deltas as indicative, not final.
+        </div>
+      )}
       <p className="text-xs text-gray-400">
-        Defender exploitability gap (<span className="text-gray-300">def_gap</span> — lower means harder
-        to exploit) and defender win rate: PFSP vs the uniform-league control, with IQM and 95% CIs.
+        Exploitability gap (lower = harder to exploit) for each side, PFSP vs the uniform-league
+        control. The <span className="text-gray-300">tail-mean</span> is the honest last-k plateau
+        estimator; the max gap is peak-biased and shown small for reference. IQM + 95% CIs
+        {pfsp?.n_runs ? ` over ${pfsp.n_runs} seeds` : ""}.
       </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {rows.map((r) => (
-          <div key={r.label} className="glass-panel rounded p-4">
-            <div className={`uppercase tracking-widest text-xs font-bold mb-2 ${r.tone}`}>
-              {r.label}
-              {r.arm?.n_runs ? <span className="text-gray-500 font-normal"> · {r.arm.n_runs} seeds</span> : null}
-            </div>
-            <div className="text-[11px] text-gray-400">Defender exploitability gap</div>
-            <div className="text-xl font-bold text-cyber-cyan">{fmtStat(r.arm?.def_gap)}</div>
-            <div className="text-[11px] text-gray-400 mt-2">Defender win rate</div>
-            <div className="text-sm text-gray-200">{fmtStat(r.arm?.def_win_rate)}</div>
-          </div>
-        ))}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="text-[11px] text-gray-500 uppercase tracking-widest">
+              <th className="text-left font-medium py-1">Metric</th>
+              <th className="text-left font-medium py-1">uniform (before)</th>
+              <th className="text-left font-medium py-1 text-fuchsia-300">pfsp (after)</th>
+              <th className="text-left font-medium py-1">Δ (pfsp − uniform)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const dm = deltaMean(r.p, r.u);
+              const good = dm != null && (r.lowerBetter ? dm < 0 : dm > 0);
+              return (
+                <tr key={r.label} className="border-t border-white/5 align-top">
+                  <td className="py-2 pr-3 text-gray-300">{r.label}</td>
+                  <td className="py-2 pr-3 text-gray-200 font-mono text-xs">
+                    {fmtStat(r.u)}
+                    {r.max?.u?.mean != null && (
+                      <span className="text-[10px] text-gray-500"> · max {r.max.u.mean.toFixed(2)}</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-cyan-200 font-mono text-xs">
+                    {fmtStat(r.p)}
+                    {r.max?.p?.mean != null && (
+                      <span className="text-[10px] text-gray-500"> · max {r.max.p.mean.toFixed(2)}</span>
+                    )}
+                  </td>
+                  <td className={`py-2 font-mono text-xs font-bold ${dm == null ? "text-gray-500" : good ? "text-fuchsia-300" : "text-orange-400"}`}>
+                    {dm == null ? "—" : `${dm >= 0 ? "+" : ""}${dm.toFixed(2)}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      {gapDelta != null && (
-        <div className={`text-sm font-bold ${gapDelta < 0 ? "text-fuchsia-300" : "text-gray-400"}`}>
-          PFSP shifts the defender exploitability gap by {gapDelta >= 0 ? "+" : ""}{gapDelta.toFixed(2)}
-          <span className="font-normal text-gray-400">
-            {gapDelta < 0
-              ? " — the defender got harder to exploit (the goal)."
-              : " — no separation yet; check the CIs and add seeds."}
-          </span>
+
+      {/* Honest asymmetric verdict */}
+      {(attDelta != null || defDelta != null) && (
+        <div className="text-xs text-gray-300 space-y-1 glass-panel rounded p-3">
+          {attDelta != null && (
+            <div>
+              <span className="font-bold text-fuchsia-300">Attacker: {attDelta >= 0 ? "+" : ""}{attDelta.toFixed(2)}</span>
+              {attDelta < 0 ? " — PFSP lowered attacker exploitability" : " — attacker exploitability rose"}
+              {attSep ? <span className="text-fuchsia-300"> (95% CIs disjoint)</span> : <span className="text-gray-500"> (CIs overlap)</span>}.
+            </div>
+          )}
+          {defDelta != null && (
+            <div>
+              <span className={`font-bold ${defDelta < 0 ? "text-fuchsia-300" : "text-orange-400"}`}>Defender: {defDelta >= 0 ? "+" : ""}{defDelta.toFixed(2)}</span>
+              {defDelta < 0 ? " — the defender got harder to exploit (the goal)" : " — the defender got more exploitable"}
+              {defSep ? <span> (95% CIs disjoint)</span> : <span className="text-gray-500"> (CIs overlap)</span>}.
+            </div>
+          )}
+          <div className="text-gray-500 pt-1">
+            PFSP concentrates both agents on their hard opponents; here the effect is asymmetric.
+          </div>
         </div>
       )}
     </div>
