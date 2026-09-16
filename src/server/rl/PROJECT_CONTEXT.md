@@ -780,7 +780,7 @@ near zero across all three seeds; uniform {0.12, 0.053, 0.393} - one high outlie
 defender effect is directionally consistent but noisy (pfsp def_gap {0.10, 0.32, 0.28}
 vs uniform {0.00, 0.18, 0.08}).
 
-### Out-of-class LLM probe: negative with a 3B model
+### Out-of-class LLM probe: negative and robust across 3B and 7B
 
 `red_team.probe` ran the frozen `pfsp_seed1` defender against an out-of-policy-class
 attacker driven by a real local LLM (Ollama `qwen2.5:3b`), 50 episodes, genuine
@@ -794,14 +794,24 @@ out_of_class_delta          -0.38
 ```
 
 The 3B LLM won 0/50, far below both the co-trained attacker (0.38) and a same-class PPO
-best-response (0.72). The traces show plausible-sounding rationales but incoherent action
-sequences (repeated `exploit_service`, exfiltration before the objective stage), i.e. a
-weak-but-genuine policy that loses every episode. The intended headline - "an out-of-class
-adversary exploits the defender *harder* than a same-class PPO" - is therefore NOT
-supported by a small model; the observed result bounds the out-of-class threat from a 3B
-LLM (it is a poor attacker in this environment). Whether a larger model
-(`qwen2.5:7b`, `codellama:13b`, both pulled locally) changes this is open; the probe
-re-runs standalone in ~30-60 min with `--model <name>` and no retraining.
+best-response (0.72). Re-running with a larger model (`qwen2.5:7b`, pulled 2026-09-16)
+gave the SAME 0/50 result, so the negative is robust across model sizes. The traces
+show plausible-sounding ATT&CK rationales but degenerate action control: the 3B loops
+on `exploit_service` and exfiltrates before the objective stage; the 7B gets stuck
+spamming `passive_recon` (6 of 7 steps in the showcase) and never advances the kill
+chain. Both are worse than the ~7% a random attacker managed earlier, i.e. deterministic
+losing lines. The intended headline - "an out-of-class adversary exploits the defender
+*harder* than a same-class PPO" - is NOT supported by small/mid open LLMs; what the probe
+actually demonstrates is (a) the trained defender is robust to a naive zero-shot LLM
+attacker, and (b) 3B-7B LLMs cannot plan a coherent multi-stage kill chain from the raw
+observation + action menu. A stronger result would need a scaffolded LLM agent (tool-use
+loop, explicit stage tracking, few-shot playbook) or a much larger model, not just a
+bigger base model dropped into the same predict() interface.
+
+Robustness note: the probe currently CRASHES on a per-call LLM failure (a missing model
+returns Ollama 404, a mid-run server drop returns connection-refused) instead of falling
+back to the scripted expert - the fallback only covers "no --llm" at init. Hardening it
+to degrade per-step (and log the fallback count) is a small open item.
 
 ### Methodology caveats that bound every number above
 
