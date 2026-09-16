@@ -721,70 +721,122 @@ NashConv below 0.36 ± 0.06. Report overlapping CIs as overlapping.
 `attack_grounding_matches_env_and_frontend`.
 
 
-## 18. First PFSP before/after run and findings (2026-09-15, n=2 first signal)
+## 18. PFSP before/after experiment and out-of-class probe (2026-09-15, n=3)
 
-The §17 experiment was finally run, as a 2-seed first-signal pass before committing
-to the full sweep. Command (from `src/server/rl`, main checkout on `master`):
+The §17 experiment was run. First a 2-seed first-signal pass, then the full 3-seed
+sweep plus the out-of-class LLM probe. Commands (from `src/server/rl`, main checkout
+on `master`):
 
 ```
-python run_experiment.py --seeds 1 2 --iterations 30 --timesteps 30000
+python run_experiment.py --seeds 1 2 --iterations 30 --timesteps 30000            # first signal
+python run_experiment.py --seeds 1 2 3 --iterations 30 --timesteps 30000 \
+                         --llm --llm-model qwen2.5:3b                              # full run
 ```
 
-Setup: uniform control arm and PFSP arm, seeds 1-2, 30 iterations, 30k timesteps/iter
+Setup: uniform control arm and PFSP arm, seeds 1-3, 30 iterations, 30k timesteps/iter
 (a fast signal, not the full 100k config default), best-response exploitability probe
-at the default `--br-iterations 12`. Seed 2 of the uniform arm was interrupted at
-iteration 15 and resumed cleanly from `trainer_state.json` (next_iteration 16); the
-history stitched with no gap, no curriculum reset, and no metric discontinuity.
+at the default `--br-iterations 12`, out-of-class LLM attacker probe on `pfsp_seed1`.
+Seed 2 of the uniform arm was interrupted at iteration 15 and resumed cleanly from
+`trainer_state.json` (next_iteration 16); the history stitched with no gap, no
+curriculum reset, and no metric discontinuity. All six runs completed 30/30 and each
+seed-3 manifest correctly records its own seed and PFSP flag (the provenance fix below).
 
-### Base arm sanity (both uniform seeds, before reading the comparison)
+### Base arm sanity (all three uniform seeds, before reading the comparison)
 
-Both seeds completed 30/30 with a healthy, non-collapsed self-play band (attacker win
-~0.56/0.63 overall, defender ~0.44/0.37), monotonic curriculum 0->1->2, zero phantom
+Every seed completed 30/30 with a healthy, non-collapsed self-play band (attacker win
+~0.56-0.65 overall, defender ~0.35-0.44), monotonic curriculum 0->1->2, zero phantom
 draws in every RL-vs-RL matchup (the old metric-corruption path did not fire). One
-consistent, interpretable weakness in both seeds: the defender loses to the SCRIPTED
-attacker (~32-33% win) while beating the expert attacker (~57-58%) and random. That is
-a specific blind spot against a fixed exploit pattern, which is exactly what PFSP is
+consistent, interpretable weakness: the defender loses to the SCRIPTED attacker
+(~32-33% win) while beating the expert attacker (~57-58%) and random. That is a
+specific blind spot against a fixed exploit pattern, which is exactly what PFSP is
 meant to target, so it makes a clean "before" baseline.
 
-### The before/after result: INCONCLUSIVE, no PFSP win at n=2
+### The before/after result (n=3): PFSP helps the ATTACKER, not the defender
 
-Aggregate mean over the two seeds (lower gap = less exploitable = better):
+Aggregate mean over the three seeds (lower gap = less exploitable = better; the tail
+column is the honest last-3-plateau estimator, the max column is peak-biased):
 
-| metric                       | uniform (before) | pfsp (after) | note                    |
-|------------------------------|------------------|--------------|-------------------------|
-| DEF gap (max, peak-biased)   | 0.09 [0.0,0.18]  | 0.21 [0.10,0.32] | uniform better      |
-| DEF gap (tail, honest)       | 0.033            | 0.123        | uniform better          |
-| ATT gap (max)                | 0.23             | 0.15         | pfsp better             |
-| ATT gap (tail)               | 0.086            | 0.024        | pfsp better             |
-| nashconv (max)               | 0.32             | 0.36         | uniform slightly better |
-| att win / def win            | 0.564 / 0.436    | 0.619 / 0.381 | pfsp shifts to attacker |
+| metric                | uniform (before)        | pfsp (after)             | verdict                        |
+|-----------------------|-------------------------|--------------------------|--------------------------------|
+| ATT gap (tail)        | +0.189 [0.053, 0.393]   | **-0.004 [-0.06, 0.04]** | **PFSP better, CIs SEPARATE**  |
+| ATT gap (max)         | 0.300 [0.20, 0.44]      | 0.113 [0.04, 0.22]       | PFSP better, CIs nearly touch  |
+| DEF gap (tail)        | **+0.029 [-0.05, 0.11]**| +0.144 [0.01, 0.23]      | uniform better, CIs overlap    |
+| DEF gap (max)         | 0.087 [0.0, 0.18]       | 0.233 [0.10, 0.32]       | uniform better, CIs overlap    |
+| nashconv (tail)       | 0.233 [0.12, 0.41]      | 0.160 [0.05, 0.24]       | PFSP lower, CIs overlap        |
+| att win / def win     | 0.584 / 0.416           | 0.611 / 0.389            | PFSP shifts play to attacker   |
 
-PFSP reduced the ATTACKER's exploitability but not the DEFENDER's; at the point estimate
-the defender got slightly more exploitable, the opposite of the hypothesis. Both agents
-share the league setting, so PFSP concentrated both sides on hard opponents and the
-attacker benefited more. None of this is significant at n=2: per-seed def_gap is
-uniform {0.00, 0.18}, pfsp {0.10, 0.32}, std ~0.1 on a ~0.1 signal, and every CI overlaps.
-No conclusion, positive or negative, is warranted yet.
+The result is coherent and **asymmetric**. PFSP made the ATTACKER substantially more
+robust: its exploitability gap collapsed to ~0 and, on the honest tail-mean, the two
+arms' 95% CIs do not overlap (uniform 0.189 vs pfsp -0.004) - the one metric that
+separates at this sample size. But PFSP made the DEFENDER *more* exploitable
+(0.029 -> 0.144), the opposite of the §17 hypothesis. Both agents share the league
+setting, so PFSP concentrated both sides on the opponents beating them and the attacker
+won that race. Net `nashconv` is slightly lower (closer to Nash) for PFSP but the CIs
+overlap.
 
-### Three methodology issues that make even the point estimates unreliable
+Per-seed, the attacker effect is robust (pfsp att_gap_tail {0.04, 0.007, -0.06} - tight
+near zero across all three seeds; uniform {0.12, 0.053, 0.393} - one high outlier,
+`uniform_seed3`, inflates the uniform mean, but the IQM 0.189 still clears pfsp). The
+defender effect is directionally consistent but noisy (pfsp def_gap {0.10, 0.32, 0.28}
+vs uniform {0.00, 0.18, 0.08}).
+
+### Out-of-class LLM probe: negative and robust across 3B and 7B
+
+`red_team.probe` ran the frozen `pfsp_seed1` defender against an out-of-policy-class
+attacker driven by a real local LLM (Ollama `qwen2.5:3b`), 50 episodes, genuine
+per-step ATT&CK reasoning traces (not the scripted fallback):
+
+```
+llm_attacker_win_rate       0.00
+cotrained_attacker_win_rate  0.38
+ppo_best_response_win_rate   0.72
+out_of_class_delta          -0.38
+```
+
+The 3B LLM won 0/50, far below both the co-trained attacker (0.38) and a same-class PPO
+best-response (0.72). Re-running with a larger model (`qwen2.5:7b`, pulled 2026-09-16)
+gave the SAME 0/50 result, so the negative is robust across model sizes. The traces
+show plausible-sounding ATT&CK rationales but degenerate action control: the 3B loops
+on `exploit_service` and exfiltrates before the objective stage; the 7B gets stuck
+spamming `passive_recon` (6 of 7 steps in the showcase) and never advances the kill
+chain. Both are worse than the ~7% a random attacker managed earlier, i.e. deterministic
+losing lines. The intended headline - "an out-of-class adversary exploits the defender
+*harder* than a same-class PPO" - is NOT supported by small/mid open LLMs; what the probe
+actually demonstrates is (a) the trained defender is robust to a naive zero-shot LLM
+attacker, and (b) 3B-7B LLMs cannot plan a coherent multi-stage kill chain from the raw
+observation + action menu. A stronger result would need a scaffolded LLM agent (tool-use
+loop, explicit stage tracking, few-shot playbook) or a much larger model, not just a
+bigger base model dropped into the same predict() interface.
+
+Robustness note: the probe currently CRASHES on a per-call LLM failure (a missing model
+returns Ollama 404, a mid-run server drop returns connection-refused) instead of falling
+back to the scripted expert - the fallback only covers "no --llm" at init. Hardening it
+to degrade per-step (and log the fallback count) is a small open item.
+
+### Methodology caveats that bound every number above
 
 1. **The best-response probe never converged** (`converged: false` on both sides in all
-   four runs, `br_iterations: 12`). Every gap is a noisy under-estimate. A converged
-   probe wants `--br-iterations ~40`, but at 40k timesteps/br-iteration that roughly
-   triples every probe and pushes the 6-run sweep past ~70h on one GPU, so it is left
-   at 12 and the limitation is stated rather than pretended away.
-2. **The headline gap used max(curve), not the plateau.** `gap_over_equilibrium` takes
-   the single luckiest BR iteration; `gap_tail_mean` (last-3 mean) is the honest
-   estimator. The sweep now reports both (see code changes below).
-3. **The equilibrium point drifts across seeds**, so gap-over-equilibrium is not
+   six runs, `br_iterations: 12`). Every gap is a noisy under-estimate. A converged probe
+   wants `--br-iterations ~40`, but at 40k timesteps/br-iteration that roughly triples
+   every probe and pushes the 6-run sweep past ~70h on one GPU, so it is left at 12 and
+   the limitation is stated rather than pretended away. The CI-separated attacker result
+   is the strongest signal but should still be read as indicative, not final.
+2. **The equilibrium point drifts across seeds**, so gap-over-equilibrium is not strictly
    comparable seed-to-seed: uniform_seed1 settled attacker-favored (att-win 0.72 at
    equilibrium) leaving almost no headroom, so its def_gap is mechanically ~0;
    pfsp_seed2 settled balanced (0.50) leaving maximum headroom, so its def_gap is 0.32.
+   The tail-mean estimator and n=3 mitigate but do not remove this.
+3. **n=3 with a bootstrap CI is thin.** IQM and the resampled interval are reported for
+   honesty about width; they are not a substitute for more seeds.
 
-Honest-framing takeaway: the infrastructure is sensitive enough to catch a null/negative
-result and refuse to overclaim. The story is "PFSP lowered attacker exploitability;
-defender exploitability was not significantly reduced at this scale (n=2, unconverged
-probe)", which the full `--seeds 1 2 3` run settles.
+Honest-framing takeaway: the infrastructure is sensitive enough to separate one real
+effect (PFSP lowers attacker exploitability, CIs disjoint on the tail estimator), record
+an honest cost (defender exploitability rises), and catch a null out-of-class result with
+a small LLM - without overclaiming any of it. The defensible one-liner: "PFSP produced a
+statistically separable reduction in attacker exploitability and a (noisier) increase in
+defender exploitability at n=3; a 3B out-of-class LLM attacker failed to exploit the
+trained defender." Larger-model out-of-class and a converged (br~40) probe are the named
+next steps.
 
 ### Code changes landed with this analysis (branch `rl_integration_ports`)
 
