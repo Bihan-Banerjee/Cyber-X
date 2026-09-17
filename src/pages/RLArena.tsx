@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { API_BASE_URL } from "@/lib/api";
+import { usePolling } from "@/hooks/usePolling";
 import {
   fetchRL, rlArtifactPlotUrl, rlPlotUrl,
   type ExploitabilityReport, type LeaderboardEntry, type MetricsHistory,
@@ -242,19 +243,14 @@ const TrainingControl = ({ source }: { source: RLSource }) => {
 
   // Reconcile with the backend rather than trusting local optimism: the button
   // used to report "training" even when the server had rejected the request.
-  useEffect(() => {
-    if (source !== "live") return;
-    const poll = async () => {
-      try {
-        const r = await fetch(`${API_BASE_URL}/api/rl/status`);
-        const d = await r.json();
-        setStatus(d.is_training ? "training" : "idle");
-      } catch { setStatus("unavailable"); }
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => clearInterval(id);
-  }, [source]);
+  // Only polls in live mode, and pauses while the tab is hidden (usePolling).
+  usePolling(async () => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/rl/status`);
+      const d = await r.json();
+      setStatus(d.is_training ? "training" : "idle");
+    } catch { setStatus("unavailable"); }
+  }, 5000, [source], source === "live");
 
   const start = async () => {
     try {

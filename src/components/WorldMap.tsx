@@ -45,6 +45,15 @@ export default function WorldMap() {
   const [globeReady, setGlobeReady] = useState(false);
   const [hoveredD, setHoveredD] = useState<any>(null);
 
+  // The globe fills the whole viewport (fixed, edge-to-edge). Lock page scroll
+  // while it is mounted so there is no stray gap above it or scrollable footer
+  // below it; the previous state is restored on unmount.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   // The 5G points dataset is ~35 MB. It is fetched at runtime from /public
   // instead of being bundled into the JS, so it never weighs down the initial
   // app load (it downloads only when this map is opened). The full dataset is

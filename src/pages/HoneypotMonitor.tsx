@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
+import CyberLoader from "@/components/CyberLoader";
 import { Activity, Shield, AlertTriangle, MapPin, Terminal, Play, Square } from "lucide-react";
 import { API_BASE_URL } from "@/lib/api";
+import { usePolling } from "@/hooks/usePolling";
 import DefenderCopilot from "@/components/DefenderCopilot";
 interface HoneypotStatus {
   name: string;
@@ -33,19 +35,13 @@ const HoneypotMonitor = () => {
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  useEffect(() => {
+  // Polls the honeypot status + recent attacks every 5s, but only while the tab
+  // is visible and auto-refresh is on. usePolling fires once immediately on
+  // mount (and whenever it re-enables), so the initial load is covered too.
+  usePolling(() => {
     fetchHoneypotStatus();
     fetchRecentAttacks();
-
-    if (autoRefresh) {
-      const interval = setInterval(() => {
-        fetchHoneypotStatus();
-        fetchRecentAttacks();
-      }, 5000); // Refresh every 5 seconds
-
-      return () => clearInterval(interval);
-    }
-  }, [autoRefresh]);
+  }, 5000, [], autoRefresh);
 
   const fetchHoneypotStatus = async () => {
     try {
@@ -133,7 +129,7 @@ const HoneypotMonitor = () => {
       <CyberpunkCard maxWidth="max-w-none" title="HONEYPOT STATUS">
         <div className="space-y-4">
           {loading ? (
-            <div className="text-center text-gray-400 py-8">Loading honeypots...</div>
+            <CyberLoader label="LOADING HONEYPOTS" />
           ) : (
             honeypots.map((honeypot) => (
               <div

@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 import Layout from "@/components/layout/Layout";
+import CyberLoader from "@/components/CyberLoader";
 const Home = lazy(() => import("@/pages/Home"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Tools = lazy(() => import("@/pages/Tools"));
@@ -120,11 +121,7 @@ const CredentialChecker = lazy(() => import("@/pages/tools/CredentialChecker"));
 const PayloadEncoder = lazy(() => import("@/pages/tools/PayloadEncoder"));
 const XXESSILibrary = lazy(() => import("@/pages/tools/XXESSILibrary"));
 
-const PageLoader = () => (
-  <div className="w-full flex items-center justify-center py-24 text-cyber-cyan/70 text-sm tracking-widest animate-pulse">
-    LOADING...
-  </div>
-);
+const PageLoader = () => <CyberLoader fullScreen label="LOADING MODULE" />;
 
 const AppRouter = () => {
   return (

@@ -50,7 +50,7 @@ import {
   Globe2,
 } from "lucide-react";
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 12;
 
 type SortField = "name" | "category";
 type SortDirection = "asc" | "desc";
@@ -608,7 +608,7 @@ const Tools = () => {
 
           {/* Tools Grid */}
           {paginatedTools.length > 0 ? (
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {paginatedTools.map((tool) => (
                 <Link
                   key={tool.path}
