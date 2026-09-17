@@ -37,25 +37,29 @@ export async function lookupASN(target: string): Promise<ASNResult> {
 
   try {
     if (ip) {
-      // Query BGPView for IP
-      const res = await fetch(`https://api.bgpview.io/ip/${encodeURIComponent(ip)}`, {
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const prefix = data.data?.prefixes?.[0];
-        if (prefix) {
-          asn = `AS${prefix.asn?.asn || ''}`;
-          name = prefix.asn?.name || '';
-          description = prefix.asn?.description || '';
-          country = prefix.asn?.country_code || '';
-          prefixes = data.data.prefixes.map((p: any) => p.prefix || '').filter(Boolean);
+      // Query BGPView for IP (guarded: BGPView has recurring outages, and a
+      // failure here must not abort the whole lookup — the fallbacks below still
+      // populate the core fields).
+      try {
+        const res = await fetch(`https://api.bgpview.io/ip/${encodeURIComponent(ip)}`, {
+          signal: controller.signal,
+          headers: { 'Accept': 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const prefix = data.data?.prefixes?.[0];
+          if (prefix) {
+            asn = `AS${prefix.asn?.asn || ''}`;
+            name = prefix.asn?.name || '';
+            description = prefix.asn?.description || '';
+            country = prefix.asn?.country_code || '';
+            prefixes = data.data.prefixes.map((p: any) => p.prefix || '').filter(Boolean);
+          }
+          if (!asn && data.data?.rir_allocation) {
+            country = data.data.rir_allocation.country_code || '';
+          }
         }
-        if (!asn && data.data?.rir_allocation) {
-          country = data.data.rir_allocation.country_code || '';
-        }
-      }
+      } catch { /* BGPView unreachable — fall through to ipinfo/ipwho below */ }
 
       // Also query ipinfo.io for additional data
       try {
@@ -67,6 +71,23 @@ export async function lookupASN(target: string): Promise<ASNResult> {
           if (!country) country = ipinfo.country || '';
         }
       } catch { /* noop */ }
+
+      // Final fallback: ipwho.is (HTTPS, no key) — resolves ASN/org/country when
+      // both BGPView and ipinfo are unavailable so the lookup never hard-fails.
+      if (!asn) {
+        try {
+          const whoRes = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, { signal: controller.signal });
+          if (whoRes.ok) {
+            const who = await whoRes.json();
+            if (who.success !== false && who.connection?.asn) {
+              asn = `AS${who.connection.asn}`;
+              name = name || who.connection.org || who.connection.isp || '';
+              description = description || who.connection.org || '';
+              country = country || who.country_code || '';
+            }
+          }
+        } catch { /* noop */ }
+      }
 
       // Now get full ASN data if we found an ASN
       if (asn) {
@@ -87,20 +108,22 @@ export async function lookupASN(target: string): Promise<ASNResult> {
       }
     } else if (asnNum) {
       asn = `AS${asnNum}`;
-      const res = await fetch(`https://api.bgpview.io/asn/${asnNum}`, {
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const d = data.data;
-        if (d) {
-          name = d.name || '';
-          description = d.description_full || d.description_short || '';
-          country = d.country_code || '';
-          abuseContact = d.abuse_contacts?.[0];
+      try {
+        const res = await fetch(`https://api.bgpview.io/asn/${asnNum}`, {
+          signal: controller.signal,
+          headers: { 'Accept': 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const d = data.data;
+          if (d) {
+            name = d.name || '';
+            description = d.description_full || d.description_short || '';
+            country = d.country_code || '';
+            abuseContact = d.abuse_contacts?.[0];
+          }
         }
-      }
+      } catch { /* BGPView unreachable — prefixes/peers below are also guarded */ }
 
       // Prefixes
       try {

@@ -150,6 +150,24 @@ export async function performTraceroute(
       totalRtt,
     };
   } catch (error: any) {
+    // execFile rejects on timeout (SIGTERM) or non-zero exit, but any hops
+    // collected before the kill are on error.stdout. On ICMP-filtered paths the
+    // command is killed mid-run; return the partial trace instead of a hard 500.
+    const partial = String(error?.stdout || '');
+    if (partial.trim()) {
+      const hops = isWindows ? parseWindows(partial) : parseUnix(partial);
+      if (hops.length) {
+        logToolActivity('Traceroute', `Traceroute to ${target} returned ${hops.length} partial hops`, 'warning');
+        const lastHop = hops[hops.length - 1];
+        return {
+          target,
+          hops,
+          totalHops: hops.length,
+          reachedTarget: lastHop?.ip !== undefined && lastHop?.status === 'success',
+          totalRtt: 0,
+        };
+      }
+    }
     logToolActivity('Traceroute', `Traceroute failed: ${error.message}`, 'warning');
     throw new Error(`Traceroute failed: ${error.message}`);
   }

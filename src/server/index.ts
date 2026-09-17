@@ -53,8 +53,8 @@ function apiKeyGuard(req: express.Request, res: express.Response, next: express.
 }
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: Number(process.env.SCAN_RATE_WINDOW_MS) || 15 * 60 * 1000,
+  max: Number(process.env.SCAN_RATE_MAX) || 20,
   message: { error: 'Too many scan requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
