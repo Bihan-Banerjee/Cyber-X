@@ -81,13 +81,14 @@ const PacketAnalyzer = () => {
     try {
       let dataToSend = pcapData;
 
-      // If file is uploaded, read it
+      // If a file is uploaded, read it as base64 (a .pcap is binary — reading it
+      // as text corrupts the bytes). The backend decodes the base64 data URL.
       if (uploadedFile) {
         const reader = new FileReader();
         dataToSend = await new Promise((resolve, reject) => {
           reader.onload = (e) => resolve(e.target?.result as string);
           reader.onerror = reject;
-          reader.readAsText(uploadedFile);
+          reader.readAsDataURL(uploadedFile);
         });
       }
 

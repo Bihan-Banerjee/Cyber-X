@@ -25,93 +25,8 @@ export interface BreachCheckResult {
   dataClassSummary: Record<string, number>;
   oldestBreach?: string;
   newestBreach?: string;
+  source?: string;
 }
-
-/**
- * Mock breach database (in production, this would call Have I Been Pwned API or similar)
- */
-const MOCK_BREACHES: Breach[] = [
-  {
-    name: 'Adobe',
-    title: 'Adobe',
-    domain: 'adobe.com',
-    breachDate: '2013-10-04',
-    addedDate: '2013-12-04',
-    modifiedDate: '2022-05-15',
-    pwnCount: 152445165,
-    description: 'In October 2013, 153 million Adobe accounts were breached with each containing an internal ID, username, email, encrypted password and a password hint in plain text. The password cryptography was poorly done and many were quickly resolved back to plain text.',
-    dataClasses: ['Email addresses', 'Password hints', 'Passwords', 'Usernames'],
-    isVerified: true,
-    isFabricated: false,
-    isSensitive: false,
-    isRetired: false,
-    isSpamList: false,
-  },
-  {
-    name: 'LinkedIn',
-    title: 'LinkedIn',
-    domain: 'linkedin.com',
-    breachDate: '2012-05-05',
-    addedDate: '2016-05-21',
-    modifiedDate: '2016-05-21',
-    pwnCount: 164611595,
-    description: 'In May 2012, LinkedIn had 6.5 million of its member passwords leaked. In 2016, a further 165 million accounts were discovered for sale online.',
-    dataClasses: ['Email addresses', 'Passwords'],
-    isVerified: true,
-    isFabricated: false,
-    isSensitive: false,
-    isRetired: false,
-    isSpamList: false,
-  },
-  {
-    name: 'Dropbox',
-    title: 'Dropbox',
-    domain: 'dropbox.com',
-    breachDate: '2012-07-01',
-    addedDate: '2016-08-31',
-    modifiedDate: '2016-08-31',
-    pwnCount: 68648009,
-    description: 'In mid-2012, Dropbox suffered a data breach which exposed the stored credentials of tens of millions of their customers.',
-    dataClasses: ['Email addresses', 'Passwords'],
-    isVerified: true,
-    isFabricated: false,
-    isSensitive: false,
-    isRetired: false,
-    isSpamList: false,
-  },
-  {
-    name: 'MyFitnessPal',
-    title: 'MyFitnessPal',
-    domain: 'myfitnesspal.com',
-    breachDate: '2018-02-01',
-    addedDate: '2018-03-30',
-    modifiedDate: '2018-03-30',
-    pwnCount: 143606147,
-    description: 'In February 2018, the diet and exercise service MyFitnessPal suffered a data breach. The incident exposed 144 million unique email addresses alongside usernames, IP addresses and passwords stored as SHA-1 and bcrypt hashes.',
-    dataClasses: ['Email addresses', 'IP addresses', 'Passwords', 'Usernames'],
-    isVerified: true,
-    isFabricated: false,
-    isSensitive: false,
-    isRetired: false,
-    isSpamList: false,
-  },
-  {
-    name: 'Twitter',
-    title: 'Twitter',
-    domain: 'twitter.com',
-    breachDate: '2022-12-01',
-    addedDate: '2023-01-06',
-    modifiedDate: '2023-01-06',
-    pwnCount: 235894991,
-    description: 'In December 2022, data originating from Twitter was leaked online. The data included phone numbers, email addresses, names, and Twitter IDs.',
-    dataClasses: ['Email addresses', 'Names', 'Phone numbers', 'Usernames'],
-    isVerified: true,
-    isFabricated: false,
-    isSensitive: false,
-    isRetired: false,
-    isSpamList: false,
-  },
-];
 
 /**
  * Calculate risk score based on breaches
@@ -135,7 +50,7 @@ function calculateRiskScore(breaches: Breach[]): number {
   // Sensitive data exposure
   const sensitiveDataClasses = ['Passwords', 'Credit cards', 'Social security numbers', 'Bank account numbers'];
   breaches.forEach(b => {
-    const hasSensitiveData = b.dataClasses.some(dc => 
+    const hasSensitiveData = b.dataClasses.some(dc =>
       sensitiveDataClasses.some(sdc => dc.toLowerCase().includes(sdc.toLowerCase()))
     );
     if (hasSensitiveData) score += 15;
@@ -148,72 +63,103 @@ function calculateRiskScore(breaches: Breach[]): number {
   return Math.min(score, 100);
 }
 
+/** Map one XposedOrNot breach-analytics detail record to our Breach shape. */
+function mapDetail(d: any): Breach {
+  const dataClasses = (d.xposed_data ? String(d.xposed_data).split(';') : [])
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  const year = d.xposed_date ? String(d.xposed_date).slice(0, 4) : '';
+  return {
+    name: d.breach || 'Unknown',
+    title: d.breach || 'Unknown',
+    domain: d.domain || '',
+    breachDate: year ? `${year}-01-01` : '',
+    addedDate: d.added || '',
+    modifiedDate: d.added || '',
+    pwnCount: Number(d.xposed_records) || 0,
+    description: d.details || '',
+    dataClasses,
+    isVerified: String(d.verified).toLowerCase() === 'yes',
+    isFabricated: false,
+    isSensitive: /password|credit|ssn|social security|bank/i.test(dataClasses.join(' ')),
+    isRetired: false,
+    isSpamList: false,
+    logoPath: d.logo || undefined,
+  };
+}
+
 /**
- * Perform breach check for an email
+ * Perform a breach check for an email using the XposedOrNot public API
+ * (free, no API key). Returns real breach records — never fabricated data.
+ * breach-analytics provides per-breach detail; check-email is the fallback for
+ * just the list of names.
  */
 export async function performBreachCheck(email: string): Promise<BreachCheckResult> {
-  // Validate email format
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     throw new Error('Invalid email format');
   }
 
-  // In a real implementation, you would call the Have I Been Pwned API here
-  // For demonstration, we'll use mock data with a probability-based approach
-
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  // For demo: certain email patterns trigger breaches
-  const shouldShowBreaches = 
-    email.includes('test') || 
-    email.includes('demo') || 
-    email.includes('example') ||
-    Math.random() > 0.5; // 50% chance for other emails
-
-  if (!shouldShowBreaches) {
-    return {
-      email,
-      isBreached: false,
-      totalBreaches: 0,
-      breaches: [],
-      riskScore: 0,
-      dataClassSummary: {},
-    };
-  }
-
-  // Select random breaches (2-5)
-  const numBreaches = Math.floor(Math.random() * 4) + 2;
-  const selectedBreaches = MOCK_BREACHES
-    .sort(() => Math.random() - 0.5)
-    .slice(0, numBreaches);
-
-  // Calculate data class summary
-  const dataClassSummary: Record<string, number> = {};
-  selectedBreaches.forEach(breach => {
-    breach.dataClasses.forEach(dc => {
-      dataClassSummary[dc] = (dataClassSummary[dc] || 0) + 1;
-    });
+  const notBreached = (): BreachCheckResult => ({
+    email, isBreached: false, totalBreaches: 0, breaches: [], riskScore: 0,
+    dataClassSummary: {}, source: 'XposedOrNot',
   });
 
-  // Find oldest and newest breaches
-  const sortedByDate = [...selectedBreaches].sort((a, b) => 
-    new Date(a.breachDate).getTime() - new Date(b.breachDate).getTime()
-  );
+  let details: any[] = [];
 
-  const oldestBreach = new Date(sortedByDate[0].breachDate).getFullYear().toString();
-  const newestBreach = new Date(sortedByDate[sortedByDate.length - 1].breachDate).getFullYear().toString();
+  // Primary: breach-analytics (rich per-breach detail).
+  try {
+    const r = await fetch(`https://api.xposedornot.com/v1/breach-analytics?email=${encodeURIComponent(email)}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      details = data?.ExposedBreaches?.breaches_details || [];
+    }
+  } catch { /* fall through to check-email */ }
 
-  const riskScore = calculateRiskScore(selectedBreaches);
+  // Fallback: check-email (names only). 404 there means "not found" = clean.
+  if (details.length === 0) {
+    try {
+      const r = await fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(email)}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (r.status === 404) return notBreached();
+      if (r.ok) {
+        const data = await r.json();
+        const names: string[] = data?.breaches?.[0] || [];
+        if (names.length === 0) return notBreached();
+        details = names.map((n) => ({ breach: n }));
+      } else {
+        throw new Error(`breach service returned HTTP ${r.status}`);
+      }
+    } catch (e: any) {
+      throw new Error(`Breach lookup service unavailable: ${e.message}`);
+    }
+  }
+
+  if (details.length === 0) return notBreached();
+
+  const breaches = details.map(mapDetail);
+
+  const dataClassSummary: Record<string, number> = {};
+  breaches.forEach((b) => b.dataClasses.forEach((dc) => { dataClassSummary[dc] = (dataClassSummary[dc] || 0) + 1; }));
+
+  const years = breaches.map((b) => new Date(b.breachDate).getFullYear()).filter((y) => !isNaN(y));
+  const oldestBreach = years.length ? String(Math.min(...years)) : undefined;
+  const newestBreach = years.length ? String(Math.max(...years)) : undefined;
 
   return {
     email,
     isBreached: true,
-    totalBreaches: selectedBreaches.length,
-    breaches: selectedBreaches,
-    riskScore,
+    totalBreaches: breaches.length,
+    breaches,
+    riskScore: calculateRiskScore(breaches),
     dataClassSummary,
     oldestBreach,
     newestBreach,
+    source: 'XposedOrNot',
   };
 }

@@ -17,96 +17,73 @@ export interface ReverseIPResult {
   sharedHosting: boolean;
   hostingProvider?: string;
   scanDuration: number;
+  note?: string;
 }
 
 /**
- * Generate mock domains for demonstration
- */
-function generateMockDomains(ip: string): HostedDomain[] {
-  const domains: HostedDomain[] = [];
-  
-  // Generate 15-50 random domains
-  const domainCount = Math.floor(Math.random() * 35) + 15;
-  
-  const tlds = ['.com', '.net', '.org', '.io', '.co', '.dev', '.app', '.tech'];
-  const prefixes = ['www', 'api', 'blog', 'shop', 'admin', 'mail', 'cdn', 'portal'];
-  const words = ['tech', 'cloud', 'data', 'soft', 'web', 'net', 'digital', 'solutions', 
-                 'services', 'systems', 'group', 'media', 'platform', 'hub', 'lab'];
-  
-  for (let i = 0; i < domainCount; i++) {
-    const hasPrefix = Math.random() > 0.7;
-    const prefix = hasPrefix ? prefixes[Math.floor(Math.random() * prefixes.length)] + '.' : '';
-    const word1 = words[Math.floor(Math.random() * words.length)];
-    const word2 = words[Math.floor(Math.random() * words.length)];
-    const tld = tlds[Math.floor(Math.random() * tlds.length)];
-    
-    const domain = `${prefix}${word1}${word2}${tld}`;
-    const rank = Math.random() > 0.8 ? Math.floor(Math.random() * 10000) + 1 : undefined;
-    const ssl = Math.random() > 0.3;
-    
-    const daysAgo = Math.floor(Math.random() * 365);
-    const lastSeen = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    domains.push({
-      domain,
-      lastSeen,
-      rank,
-      ssl,
-    });
-  }
-  
-  return domains;
-}
-
-/**
- * Perform reverse IP lookup
+ * Perform a reverse IP lookup.
+ * - PTR record comes from a real reverse-DNS query.
+ * - The co-hosted domain list comes from the HackerTarget reverse-IP API
+ *   (free tier, no key, limited daily quota). On quota/no-data/error the tool
+ *   still returns the PTR plus a `note`, and never fabricates domains.
  */
 export async function performReverseIPLookup(
   ip: string,
   timeoutMs: number = 30000
 ): Promise<ReverseIPResult> {
   const startTime = performance.now();
-  
-  // Try to get PTR record
+
+  // Real reverse-DNS (PTR)
   let ptr = '';
   try {
     const hostnames = await dns.reverse(ip);
     ptr = hostnames[0] || '';
-  } catch (error) {
-    // PTR record not found
+  } catch {
     ptr = '';
   }
-  
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  // Generate mock domains
-  const domains = generateMockDomains(ip);
-  
+
+  // Real co-hosted domains via HackerTarget
+  let domains: HostedDomain[] = [];
+  let note: string | undefined;
+  try {
+    const r = await fetch(`https://api.hackertarget.com/reverseiplookup/?q=${encodeURIComponent(ip)}`, {
+      signal: AbortSignal.timeout(Math.min(timeoutMs, 15000)),
+    });
+    const text = (await r.text()).trim();
+    if (/api count exceeded/i.test(text)) {
+      note = 'Reverse-IP API daily quota reached — showing PTR record only.';
+    } else if (/error|no dns|no records|invalid/i.test(text)) {
+      note = 'No co-hosted domains found for this IP.';
+    } else {
+      domains = text
+        .split('\n')
+        .map((l) => l.trim().toLowerCase())
+        .filter(Boolean)
+        .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(d) && !d.endsWith('.arpa'))
+        .slice(0, 500)
+        .map((domain) => ({ domain }));
+      if (domains.length === 0) note = 'No co-hosted domains found for this IP.';
+    }
+  } catch (e: any) {
+    note = `Reverse-IP lookup service unavailable: ${e.message}`;
+  }
+
   const totalDomains = domains.length;
   const sharedHosting = totalDomains > 1;
-  
-  // Determine hosting provider from PTR or mock
+
+  // Hosting provider inferred from the (real) PTR record only.
   let hostingProvider: string | undefined;
   if (ptr) {
-    if (ptr.includes('amazon') || ptr.includes('aws')) hostingProvider = 'Amazon Web Services';
-    else if (ptr.includes('google')) hostingProvider = 'Google Cloud';
-    else if (ptr.includes('digitalocean')) hostingProvider = 'DigitalOcean';
-    else if (ptr.includes('cloudflare')) hostingProvider = 'Cloudflare';
-  } else {
-    const providers = ['Amazon Web Services', 'Google Cloud', 'DigitalOcean', 'Linode', 'Vultr', 'Hetzner'];
-    hostingProvider = Math.random() > 0.5 ? providers[Math.floor(Math.random() * providers.length)] : undefined;
+    if (/amazon|aws/i.test(ptr)) hostingProvider = 'Amazon Web Services';
+    else if (/google|1e100/i.test(ptr)) hostingProvider = 'Google Cloud';
+    else if (/digitalocean/i.test(ptr)) hostingProvider = 'DigitalOcean';
+    else if (/cloudflare/i.test(ptr)) hostingProvider = 'Cloudflare';
+    else if (/microsoft|azure/i.test(ptr)) hostingProvider = 'Microsoft Azure';
+    else if (/linode/i.test(ptr)) hostingProvider = 'Linode';
+    else if (/hetzner/i.test(ptr)) hostingProvider = 'Hetzner';
   }
-  
+
   const scanDuration = Math.round((performance.now() - startTime) / 1000);
-  
-  return {
-    ip,
-    ptr,
-    totalDomains,
-    domains,
-    sharedHosting,
-    hostingProvider,
-    scanDuration,
-  };
+
+  return { ip, ptr, totalDomains, domains, sharedHosting, hostingProvider, scanDuration, note };
 }
