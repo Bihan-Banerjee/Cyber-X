@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import CyberpunkCard from "@/components/CyberpunkCard";
 import { Activity, Shield, AlertTriangle, TrendingUp } from "lucide-react";
 import { API_BASE_URL } from "@/lib/api";
+import { usePolling } from "@/hooks/usePolling";
 interface ToolActivity {
   toolName: string;
   timestamp: string;
@@ -31,63 +32,18 @@ const Dashboard = () => {
     network: 0,
     disk: 0,
   });
-  const [isActive, setIsActive] = useState(true);
-
-  useEffect(() => {
-    // Set component as active when mounted
-    setIsActive(true);
-
-    // Fetch initial data
-    fetchRecentTools();
-    fetchSystemResources();
-
-    // Update stats periodically
-    const statsInterval = setInterval(() => {
-      setStats((prev) => ({
-        ...prev,
-        threatsDetected: prev.threatsDetected + Math.floor(Math.random() * 3),
-      }));
-    }, 5000);
-
-    // Update recent tools every 5 seconds (only when active)
-    const toolsInterval = setInterval(() => {
-      if (isActive) {
-        fetchRecentTools();
-      }
-    }, 5000);
-
-    // Update system resources every 5 seconds (only when active)
-    const resourcesInterval = setInterval(() => {
-      if (isActive) {
-        fetchSystemResources();
-      }
-    }, 5000);
-
-    // Handle visibility change (tab switching)
-    const handleVisibilityChange = () => {
-      setIsActive(!document.hidden);
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Cleanup
-    return () => {
-      setIsActive(false);
-      clearInterval(statsInterval);
-      clearInterval(toolsInterval);
-      clearInterval(resourcesInterval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
-
-  // Update isActive state when component unmounts or remounts
-  useEffect(() => {
-    if (!isActive) return;
-
-    // Fetch data when component becomes active again
-    fetchRecentTools();
-    fetchSystemResources();
-  }, [isActive]);
+  // All three pollers pause while the tab is hidden and fire once immediately
+  // on mount / when the tab becomes visible again (usePolling). This replaces a
+  // hand-rolled visibilitychange + isActive scheme whose interval callbacks
+  // captured a stale isActive and so never actually paused.
+  usePolling(() => {
+    setStats((prev) => ({
+      ...prev,
+      threatsDetected: prev.threatsDetected + Math.floor(Math.random() * 3),
+    }));
+  }, 5000);
+  usePolling(() => fetchRecentTools(), 5000);
+  usePolling(() => fetchSystemResources(), 5000);
 
   const fetchRecentTools = async () => {
     try {
