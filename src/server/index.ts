@@ -18,21 +18,29 @@ const RL_API_URL = process.env.RL_API_URL || 'http://localhost:5001';
 // req.ip resolve the real client instead of the proxy.
 app.set('trust proxy', 1);
 
-// CORS allowlist. Defaults to local dev origins. In production set CORS_ORIGINS
-// to your frontend's public URL(s), comma-separated, e.g.
-//   CORS_ORIGINS=https://cyberx.example.com,https://cyberx.onrender.com
-// Or set CORS_ORIGINS=* to allow any origin (fine for a public demo — the API
-// is unauthenticated by default anyway; add CYBERX_API_KEY to lock it down).
-// This replaced the previous cors() that allowed ANY origin; the localhost-only
-// default silently blocked hosted frontends, so it is now explicitly configurable.
-const CORS_ORIGINS = (process.env.CORS_ORIGINS
-  || 'http://localhost:8080,http://localhost:5173,http://localhost:3000')
-  .split(',').map((o) => o.trim()).filter(Boolean);
-const ALLOW_ALL_ORIGINS = CORS_ORIGINS.includes('*');
+// CORS. Behaviour depends on the CORS_ORIGINS env var:
+//   - UNSET / empty  -> reflect any origin (open). A hosted, unauthenticated
+//     deploy works out of the box; lock it down with CYBERX_API_KEY and/or by
+//     setting CORS_ORIGINS. This is why a freshly deployed frontend on any host
+//     (Vercel, Render, Netlify, a preview URL, ...) is not blocked by default.
+//   - "*"            -> allow any origin explicitly.
+//   - a list         -> strict allowlist of exact origins, comma-separated, e.g.
+//     CORS_ORIGINS=https://cyberx.example.com,https://cyberx.vercel.app
+// Origins are compared with any trailing slash stripped, so a value like
+// "https://app.example.com/" still matches the browser origin
+// "https://app.example.com" (a common misconfiguration that used to block calls).
+const normalizeOrigin = (o: string) => o.trim().replace(/\/+$/, '');
+const CORS_ORIGINS_RAW = process.env.CORS_ORIGINS;
+const CORS_ORIGINS = (CORS_ORIGINS_RAW || '')
+  .split(',').map(normalizeOrigin).filter(Boolean);
+// No configured origins at all, or an explicit "*", means allow any origin.
+const ALLOW_ALL_ORIGINS = CORS_ORIGINS.length === 0 || CORS_ORIGINS.includes('*');
 app.use(cors({
   origin(origin, cb) {
     // Requests with no Origin (curl, server-to-server, same-origin) are allowed.
-    if (!origin || ALLOW_ALL_ORIGINS || CORS_ORIGINS.includes(origin)) return cb(null, true);
+    if (!origin || ALLOW_ALL_ORIGINS || CORS_ORIGINS.includes(normalizeOrigin(origin))) {
+      return cb(null, true);
+    }
     // Not on the allowlist: don't set the CORS header (the browser blocks it),
     // but don't throw — a 500 here would be misleading.
     return cb(null, false);

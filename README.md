@@ -142,9 +142,11 @@ npm start         # runs the compiled server (node dist/server/index.js)
 Copy `.env.example` to `.env` and adjust as needed. The most important settings
 for a deployment:
 
-- `CORS_ORIGINS` - set this to your frontend's public URL (comma-separated for
-  several), or `*` for a public demo. The default is localhost only, which will
-  block a deployed frontend.
+- `CORS_ORIGINS` - controls which browser origins may call the API. Leave it
+  unset (the default) to reflect any origin, so a deployed frontend works with no
+  extra configuration. To restrict it, set a comma-separated allowlist of exact
+  origins (a trailing slash is tolerated) or `*`. The API is unauthenticated by
+  default, so set `CYBERX_API_KEY` if you need real access control.
 - `VITE_API_BASE_URL` - set to your backend URL before building the frontend if
   the frontend and backend are on different origins.
 - `CYBERX_API_KEY` - optional; if set, all `/api/*` calls must send a matching
