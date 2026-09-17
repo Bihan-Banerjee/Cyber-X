@@ -78,6 +78,9 @@ const CookieAnalyzer = () => {
   return (
     <CyberpunkCard title="COOKIE ANALYZER">
       <div className="space-y-5">
+        <p className="text-sm text-gray-400">
+          Audit a site's cookies for missing HttpOnly, Secure, and SameSite flags and get a security score.
+        </p>
         <div className="flex gap-2">
           <Input value={url} onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
@@ -85,6 +88,7 @@ const CookieAnalyzer = () => {
             className="bg-black/50 border-cyber-cyan/30 text-cyber-cyan"
             disabled={isLoading} />
           <Button onClick={handleAnalyze} disabled={isLoading || !url.trim()}
+            aria-label="Analyze cookies" title="Analyze cookies"
             className="bg-cyber-red hover:bg-cyber-red/80 text-white font-bold px-6">
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
           </Button>
