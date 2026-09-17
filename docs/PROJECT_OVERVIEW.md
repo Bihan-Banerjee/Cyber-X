@@ -218,8 +218,15 @@ network interface that does not exist).
 - CORS broke on the deployed site. Earlier hardening replaced an allow-any CORS
   policy with a localhost-only allowlist, which silently blocked the deployed
   frontend so every backend tool failed with a CORS error while client-side
-  tools kept working. Fixed to a configurable allowlist that also supports a
-  wildcard, with clear guidance to set the frontend URL in production.
+  tools kept working. The first fix made the allowlist configurable, but it still
+  required an environment variable to be set correctly on the host, and a missing
+  or trailing-slash-mismatched value silently re-broke the deployed site. The
+  final fix changed the default: with no CORS_ORIGINS set, the server reflects any
+  origin (correct for an unauthenticated public demo, and it makes preview URLs
+  work), while a configured value is still a strict allowlist. Origins are also
+  compared with any trailing slash stripped so a common misconfiguration no longer
+  blocks calls. Locking the API down is done with CYBERX_API_KEY, which is the
+  real access control, rather than relying on CORS.
 - Duplicate, shadowed routes. The main route file had a large block of duplicate
   endpoint definitions; the earlier de-duplication commented them out but left a
   few endpoints without their intended per-endpoint rate limiters. Documented and
@@ -384,8 +391,13 @@ though it worked under the esbuild-based dev runner. I fixed it with
 createRequire. Separately, CORS broke the deployed site: a hardening change had
 replaced allow-any CORS with a localhost-only allowlist, which silently blocked
 the deployed frontend, so every backend tool failed with a CORS error while
-client-side tools kept working. I made the allowlist configurable with a wildcard
-option and documented setting the frontend URL in production.
+client-side tools kept working. My first fix made the allowlist configurable, but
+that still depended on an env var being set correctly on the host, and it broke
+again from a missing value and a trailing-slash mismatch. The lesson was that the
+safe default matters: for an unauthenticated public demo I made an unset config
+reflect any origin (so it just works, including preview URLs), kept a configured
+value as a strict allowlist, normalized trailing slashes, and pointed real
+lock-down at the API-key gate instead of treating CORS as the security boundary.
 
 Q: How did you verify 100+ tools actually work?
 A: I scripted it. First a static cross-reference (every tool has a route, a
