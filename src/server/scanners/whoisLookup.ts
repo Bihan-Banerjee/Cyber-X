@@ -1,8 +1,11 @@
-// The `whois` package is CommonJS and assigns its API via `module.exports = {...}`,
-// which esbuild/tsx does not hoist into named ESM bindings — `import * as whois`
-// leaves `whois.lookup` undefined. A default import binds the whole exports object.
-import whoisModule from 'whois';
-const whois = whoisModule as unknown as {
+// The `whois` package is CommonJS (`module.exports = {...}`). Under tsx/esbuild a
+// default import works, but the compiled NodeNext build hits Node's native ESM
+// loader, which rejects `import whoisModule from 'whois'` ("no export named
+// 'default'"). createRequire loads the CJS module the same way in both, so it is
+// the portable fix.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const whois = require('whois') as {
   lookup: (
     domain: string,
     options: { timeout?: number; follow?: number },
