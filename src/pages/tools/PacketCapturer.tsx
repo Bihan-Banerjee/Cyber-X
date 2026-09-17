@@ -197,6 +197,14 @@ const PacketCapturer = () => {
   return (
     <CyberpunkCard title="PACKET CAPTURER">
       <div className="space-y-6">
+        {/* Honesty disclaimer: this tool shows simulated traffic. */}
+        <div className="rounded border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <strong>Demo mode — simulated data.</strong> This tool displays synthetic packets to
+          demonstrate the interface. Real live capture needs npcap/libpcap and administrator
+          privileges, which a hosted web tool cannot use. For real captures use Wireshark or
+          <code className="mx-1">tcpdump</code>, then analyze the .pcap in the Packet Analyzer.
+        </div>
+
         {/* Interface Selection */}
         <div className="glass-panel rounded p-6">
           <h3 className="text-lg font-bold text-cyber-cyan mb-4">NETWORK INTERFACE</h3>
@@ -365,8 +373,8 @@ const PacketCapturer = () => {
 
         {/* Info Box */}
         <div className="text-xs text-gray-500 p-3 bg-black/30 rounded">
-          <p className="font-semibold text-cyber-cyan mb-1">ℹ️ Packet Capture</p>
-          <p>Captures live network packets from selected interface. Supports BPF filters for targeted capture. Download as PCAP file for analysis in Wireshark or other tools. Requires appropriate network permissions.</p>
+          <p className="font-semibold text-cyber-cyan mb-1">ℹ️ Packet Capture (demo)</p>
+          <p>Demonstrates a capture workflow with synthetic packets and BPF-style filter input. Real packet capture needs npcap/libpcap and administrator privileges. Capture real traffic with Wireshark or tcpdump, then load the .pcap into the Packet Analyzer.</p>
         </div>
       </div>
     </CyberpunkCard>

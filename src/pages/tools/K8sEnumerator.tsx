@@ -283,6 +283,13 @@ const K8sEnumerator = () => {
   return (
     <CyberpunkCard title="KUBERNETES ENUMERATOR">
       <div className="space-y-6">
+        <div className="rounded border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <strong>Use only on clusters you own or are authorized to test.</strong> This queries
+          the live Kubernetes REST API (<code>/version</code>, pods, services, secrets) with your
+          bearer token and reports real findings. TLS certificate verification is skipped so
+          self-signed API servers work, so run it against trusted endpoints only. A scoped token
+          returns partial results.
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm text-cyber-cyan mb-2 tracking-wide">

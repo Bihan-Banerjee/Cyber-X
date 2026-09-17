@@ -12,50 +12,79 @@ export interface OSINTSearchResult {
   totalResults: number;
   results: SearchResult[];
   searchDuration: number;
+  source?: string;
+  note?: string;
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+/** DuckDuckGo wraps result links as //duckduckgo.com/l/?uddg=<encoded real url>. */
+function unwrapDdgUrl(href: string): string {
+  const m = href.match(/[?&]uddg=([^&]+)/);
+  if (m) { try { return decodeURIComponent(m[1]); } catch { /* noop */ } }
+  return href.startsWith('//') ? 'https:' + href : href;
 }
 
 /**
- * Perform OSINT search using Bing Search (simulated)
- * In production, use Bing Web Search API or alternatives like SerpAPI
+ * Perform an OSINT web search using the DuckDuckGo HTML endpoint (no API key).
+ * Returns real search results for the query (e.g. a Google-dork string). This
+ * replaces the previous simulated placeholder results.
  */
 export async function performOSINTSearch(query: string): Promise<OSINTSearchResult> {
   const startTime = performance.now();
-  
+
   try {
-    // Simulate search results (in production, use actual Bing API)
-    // Due to Bing API retirement, we simulate results
-    // You can integrate with alternatives like SerpAPI, ScraperAPI, or Brave Search API
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const mockResults: SearchResult[] = [
-      {
-        title: `Search Results for: ${query.substring(0, 50)}...`,
-        url: `https://example.com/result1`,
-        snippet: `This is a sample search result matching your query: ${query}. The content contains relevant information based on your dork query.`,
-        displayUrl: 'example.com/result1'
+    const resp = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        'Accept': 'text/html',
       },
-      {
-        title: `Matching Document - ${query.split(' ')[0]}`,
-        url: `https://test.com/document`,
-        snippet: `Found a document matching your search criteria. This demonstrates how OSINT scraping works with Google dorks.`,
-        displayUrl: 'test.com/document'
-      },
-      {
-        title: `Public Data Exposure - ${query.split(' ')[1] || 'Query'}`,
-        url: `https://data.org/exposed`,
-        snippet: `Public database or file matching your dork query. Always verify findings and report vulnerabilities responsibly.`,
-        displayUrl: 'data.org/exposed'
-      }
-    ];
-    
-    const searchDuration = Math.round(performance.now() - startTime);
-    
+      signal: AbortSignal.timeout(12000),
+    });
+
+    if (!resp.ok) throw new Error(`search endpoint returned HTTP ${resp.status}`);
+    const html = await resp.text();
+
+    const results: SearchResult[] = [];
+    // Each organic result: an anchor with class result__a (title+link) and a
+    // following result__snippet anchor/div (snippet).
+    const linkRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const snippetRe = /<(?:a|div)[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div)>/g;
+    const snippets: string[] = [];
+    let sm: RegExpExecArray | null;
+    while ((sm = snippetRe.exec(html)) !== null) snippets.push(stripTags(sm[1]));
+
+    let lm: RegExpExecArray | null;
+    let i = 0;
+    while ((lm = linkRe.exec(html)) !== null && results.length < 30) {
+      const url = unwrapDdgUrl(lm[1]);
+      const title = stripTags(lm[2]);
+      if (!title || !/^https?:\/\//i.test(url)) { i++; continue; }
+      let displayUrl = url;
+      try { displayUrl = new URL(url).hostname + new URL(url).pathname; } catch { /* noop */ }
+      results.push({ title, url, snippet: snippets[i] || '', displayUrl });
+      i++;
+    }
+
     return {
       query,
-      totalResults: mockResults.length,
-      results: mockResults,
-      searchDuration,
+      totalResults: results.length,
+      results,
+      searchDuration: Math.round(performance.now() - startTime),
+      source: 'DuckDuckGo',
+      note: results.length === 0 ? 'No results (the search provider may be rate-limiting — try again shortly).' : undefined,
     };
   } catch (error: any) {
     throw new Error(`OSINT search failed: ${error.message}`);

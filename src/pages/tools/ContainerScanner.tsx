@@ -266,6 +266,13 @@ const ContainerScanner = () => {
   return (
     <CyberpunkCard title="CONTAINER SCANNER">
       <div className="space-y-6">
+        <div className="rounded border border-cyber-cyan/40 bg-cyber-cyan/5 p-3 text-sm text-gray-300">
+          <strong className="text-cyber-cyan">Scope:</strong> image metadata, layers, and
+          config-level checks (runs-as-root, <code>:latest</code>, secrets in ENV, size) are
+          pulled live from Docker Hub. Package-level CVE scanning needs a scanner with a
+          vulnerability database — run <code className="mx-1">trivy image &lt;name&gt;</code>
+          locally for that. Only public Docker Hub images are queried.
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm text-cyber-cyan mb-2 tracking-wide">
@@ -299,8 +306,8 @@ const ContainerScanner = () => {
           </Button>
 
           <div className="text-xs text-gray-500 p-3 bg-black/30 rounded">
-            <p className="font-semibold text-cyber-cyan mb-1">ℹ️ Container Security Scanning</p>
-            <p>Scans Docker container images for known vulnerabilities (CVEs), misconfigurations, and security issues. Supports public images from Docker Hub.</p>
+            <p className="font-semibold text-cyber-cyan mb-1">ℹ️ Container Image Analysis</p>
+            <p>Inspects public Docker Hub images: real metadata (size, layers, created, architecture) and config-level security issues (runs-as-root, :latest, secrets in ENV). Package CVE scanning is not performed here — use Trivy or Grype locally for that.</p>
           </div>
         </div>
 

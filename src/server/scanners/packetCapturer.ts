@@ -23,6 +23,9 @@ export interface CaptureSession {
   packetCount: number;
   totalBytes: number;
   duration: number;
+  /** These packets are synthetic. Real capture needs npcap/libpcap + admin. */
+  simulated: boolean;
+  note: string;
 }
 
 // Global capture state
@@ -149,6 +152,8 @@ function getCurrentSession(): CaptureSession {
     packetCount: captureState.packets.length,
     totalBytes,
     duration,
+    simulated: true,
+    note: 'Demo mode: packets are synthetic. Real live capture requires npcap/libpcap and administrator privileges, which this hosted tool cannot use.',
   };
 }
 
