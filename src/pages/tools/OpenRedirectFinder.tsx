@@ -50,6 +50,10 @@ const OpenRedirectFinder = () => {
   return (
     <CyberpunkCard title="OPEN REDIRECT FINDER">
       <div className="space-y-6">
+        <div className="rounded border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <strong>Authorized use only.</strong> This sends active redirect payloads to the target.
+          Only test applications you own or have explicit written permission to assess.
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-cyber-cyan mb-2 tracking-wide">TARGET URL</label>

@@ -56,6 +56,10 @@ const SSRFTester = () => {
   return (
     <CyberpunkCard title="SSRF TESTER">
       <div className="space-y-5">
+        <div className="rounded border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <strong>Authorized use only.</strong> This sends active SSRF payloads to the target.
+          Only test applications you own or have explicit written permission to assess.
+        </div>
         <div className="flex gap-2">
           {(["scan", "payloads"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)}

@@ -18,13 +18,25 @@ const RL_API_URL = process.env.RL_API_URL || 'http://localhost:5001';
 // req.ip resolve the real client instead of the proxy.
 app.set('trust proxy', 1);
 
-// CORS allowlist. Default to the local dev origins; override in production with
-// CORS_ORIGINS (comma-separated). Previously cors() allowed ANY origin.
+// CORS allowlist. Defaults to local dev origins. In production set CORS_ORIGINS
+// to your frontend's public URL(s), comma-separated, e.g.
+//   CORS_ORIGINS=https://cyberx.example.com,https://cyberx.onrender.com
+// Or set CORS_ORIGINS=* to allow any origin (fine for a public demo — the API
+// is unauthenticated by default anyway; add CYBERX_API_KEY to lock it down).
+// This replaced the previous cors() that allowed ANY origin; the localhost-only
+// default silently blocked hosted frontends, so it is now explicitly configurable.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS
   || 'http://localhost:8080,http://localhost:5173,http://localhost:3000')
   .split(',').map((o) => o.trim()).filter(Boolean);
+const ALLOW_ALL_ORIGINS = CORS_ORIGINS.includes('*');
 app.use(cors({
-  origin: CORS_ORIGINS,
+  origin(origin, cb) {
+    // Requests with no Origin (curl, server-to-server, same-origin) are allowed.
+    if (!origin || ALLOW_ALL_ORIGINS || CORS_ORIGINS.includes(origin)) return cb(null, true);
+    // Not on the allowlist: don't set the CORS header (the browser blocks it),
+    // but don't throw — a 500 here would be misleading.
+    return cb(null, false);
+  },
   methods: ['GET', 'POST', 'OPTIONS'],
 }));
 

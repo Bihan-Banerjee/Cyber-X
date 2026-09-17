@@ -259,6 +259,10 @@ const DirectoryFuzzer = () => {
   return (
     <CyberpunkCard title="DIRECTORY FUZZER">
       <div className="space-y-6">
+        <div className="rounded border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <strong>Authorized use only.</strong> This sends many requests to brute-force paths on
+          the target. Only test sites you own or have explicit written permission to assess.
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm text-cyber-cyan mb-2 tracking-wide">
