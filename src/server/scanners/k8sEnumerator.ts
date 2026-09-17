@@ -1,4 +1,6 @@
 import { performance } from 'node:perf_hooks';
+import https from 'node:https';
+import http from 'node:http';
 
 export interface K8sResource {
   type: string;
@@ -35,182 +37,55 @@ export interface K8sEnumerationResult {
     insecureConfigs: number;
   };
   scanDuration: number;
+  note?: string;
 }
 
+interface ApiResp { status: number; body: any; }
+
 /**
- * Generate mock K8s resources
+ * GET a Kubernetes API path. TLS verification is disabled because API servers
+ * commonly present a private-CA/self-signed certificate — this is an
+ * authenticated admin tool the operator points at their OWN cluster.
  */
-function generateMockResources(): K8sResource[] {
-  const resources: K8sResource[] = [];
-  
-  const namespaces = ['default', 'kube-system', 'production', 'staging'];
-  const podTypes = ['nginx', 'redis', 'postgres', 'api-server', 'frontend', 'backend'];
-  
-  // Generate pods
-  for (let i = 0; i < 15; i++) {
-    const namespace = namespaces[Math.floor(Math.random() * namespaces.length)];
-    const podType = podTypes[Math.floor(Math.random() * podTypes.length)];
-    const isPrivileged = Math.random() > 0.7;
-    const hasSecurityIssues = Math.random() > 0.6;
-    
-    const issues: string[] = [];
-    if (isPrivileged) issues.push('Running as privileged');
-    if (hasSecurityIssues) issues.push('No security context defined');
-    if (Math.random() > 0.8) issues.push('Using default service account');
-    
-    resources.push({
-      type: 'Pod',
-      name: `${podType}-${Math.random().toString(36).substr(2, 9)}`,
-      namespace,
-      status: 'Running',
-      issues,
-      severity: isPrivileged ? 'critical' : issues.length > 0 ? 'high' : 'low',
-    });
-  }
-  
-  // Generate services
-  for (let i = 0; i < 8; i++) {
-    const namespace = namespaces[Math.floor(Math.random() * namespaces.length)];
-    const isPublic = Math.random() > 0.6;
-    
-    resources.push({
-      type: 'Service',
-      name: `service-${i}`,
-      namespace,
-      status: 'Active',
-      issues: isPublic ? ['Exposed to public internet'] : [],
-      severity: isPublic ? 'high' : 'low',
-    });
-  }
-  
-  // Generate secrets
-  for (let i = 0; i < 5; i++) {
-    const namespace = namespaces[Math.floor(Math.random() * namespaces.length)];
-    const isExposed = Math.random() > 0.7;
-    
-    resources.push({
-      type: 'Secret',
-      name: `secret-${i}`,
-      namespace,
-      status: 'Active',
-      issues: isExposed ? ['Accessible without proper RBAC'] : [],
-      severity: isExposed ? 'critical' : 'medium',
-    });
-  }
-  
-  return resources;
+function k8sGet(base: string, path: string, token: string | undefined, timeoutMs: number): Promise<ApiResp> {
+  return new Promise((resolve, reject) => {
+    let u: URL;
+    try { u = new URL(path, base.endsWith('/') ? base : base + '/'); } catch { return reject(new Error('Invalid API endpoint URL')); }
+    const isHttps = u.protocol === 'https:';
+    const lib = isHttps ? https : http;
+    const req = lib.request(
+      {
+        hostname: u.hostname,
+        port: u.port || (isHttps ? 443 : 80),
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: 'application/json' },
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => { let body: any = null; try { body = JSON.parse(data); } catch { /* non-JSON */ } resolve({ status: res.statusCode || 0, body }); });
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('Connection timed out')));
+    req.end();
+  });
+}
+
+function scoreFromMisconfigs(m: K8sMisconfiguration[]): number {
+  let s = 100;
+  for (const x of m) s -= x.severity === 'critical' ? 15 : x.severity === 'high' ? 10 : x.severity === 'medium' ? 5 : 2;
+  return Math.max(0, s);
 }
 
 /**
- * Generate misconfigurations based on resources
- */
-function generateMisconfigurations(resources: K8sResource[]): K8sMisconfiguration[] {
-  const misconfigs: K8sMisconfiguration[] = [];
-  
-  // RBAC issues
-  if (Math.random() > 0.5) {
-    misconfigs.push({
-      category: 'RBAC',
-      issue: 'Overly Permissive ClusterRole',
-      severity: 'high',
-      resource: 'ClusterRole/cluster-admin',
-      description: 'ClusterRole grants excessive permissions including cluster-admin access',
-      recommendation: 'Apply principle of least privilege. Create specific roles with minimal required permissions',
-    });
-  }
-  
-  // Pod security
-  const privilegedPods = resources.filter(r => r.issues.includes('Running as privileged'));
-  privilegedPods.forEach(pod => {
-    misconfigs.push({
-      category: 'Pod Security',
-      issue: 'Privileged Pod Detected',
-      severity: 'critical',
-      resource: `${pod.namespace}/${pod.name}`,
-      description: 'Pod is running with privileged security context, allowing full host access',
-      recommendation: 'Remove privileged flag. Use specific capabilities instead of full privileges',
-    });
-  });
-  
-  // Network policies
-  if (Math.random() > 0.6) {
-    misconfigs.push({
-      category: 'Network Security',
-      issue: 'Missing Network Policies',
-      severity: 'medium',
-      resource: 'namespace/production',
-      description: 'No NetworkPolicies defined, allowing unrestricted pod-to-pod communication',
-      recommendation: 'Implement NetworkPolicies to restrict traffic between pods and namespaces',
-    });
-  }
-  
-  // Secrets management
-  if (Math.random() > 0.5) {
-    misconfigs.push({
-      category: 'Secrets Management',
-      issue: 'Secrets Not Encrypted at Rest',
-      severity: 'high',
-      resource: 'etcd',
-      description: 'Kubernetes secrets are not encrypted at rest in etcd',
-      recommendation: 'Enable encryption at rest for secrets using EncryptionConfiguration',
-    });
-  }
-  
-  // API server security
-  misconfigs.push({
-    category: 'API Server',
-    issue: 'Anonymous Authentication Enabled',
-    severity: 'high',
-    resource: 'kube-apiserver',
-    description: 'API server allows anonymous requests',
-    recommendation: 'Disable anonymous authentication with --anonymous-auth=false',
-  });
-  
-  // Admission controllers
-  if (Math.random() > 0.7) {
-    misconfigs.push({
-      category: 'Admission Control',
-      issue: 'PodSecurityPolicy Not Enforced',
-      severity: 'medium',
-      resource: 'admission-controller',
-      description: 'PodSecurityPolicy admission controller is not enabled',
-      recommendation: 'Enable and configure PodSecurityPolicy or use Pod Security Standards',
-    });
-  }
-  
-  // Resource limits
-  misconfigs.push({
-    category: 'Resource Management',
-    issue: 'Missing Resource Limits',
-    severity: 'low',
-    resource: 'namespace/default',
-    description: 'Pods running without CPU/memory limits can cause resource exhaustion',
-    recommendation: 'Define ResourceQuotas and LimitRanges for all namespaces',
-  });
-  
-  return misconfigs;
-}
-
-/**
- * Calculate security score
- */
-function calculateSecurityScore(misconfigs: K8sMisconfiguration[]): number {
-  let score = 100;
-  
-  misconfigs.forEach(m => {
-    switch (m.severity) {
-      case 'critical': score -= 15; break;
-      case 'high': score -= 10; break;
-      case 'medium': score -= 5; break;
-      case 'low': score -= 2; break;
-    }
-  });
-  
-  return Math.max(0, score);
-}
-
-/**
- * Perform K8s enumeration
+ * Enumerate a Kubernetes cluster via its REST API using a bearer token.
+ * Queries real endpoints (/version, /api/v1/namespaces, pods, services, secrets)
+ * and derives findings from live data — no mock resources. Per-resource 403s are
+ * tolerated (a scoped token still yields partial results).
  */
 export async function performK8sEnumeration(
   apiEndpoint: string,
@@ -218,42 +93,112 @@ export async function performK8sEnumeration(
   timeoutMs: number = 30000
 ): Promise<K8sEnumerationResult> {
   const startTime = performance.now();
-  
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1500));
-  
-  // Generate mock data
-  const resources = generateMockResources();
-  const misconfigurations = generateMisconfigurations(resources);
-  
-  const namespaces = ['default', 'kube-system', 'production', 'staging', 'monitoring'];
-  
+  const perCall = Math.min(Math.max(timeoutMs, 3000), 15000);
+
+  if (!/^https?:\/\//i.test(apiEndpoint)) {
+    throw new Error('API endpoint must be a full URL, e.g. https://<host>:6443');
+  }
+
+  // Connectivity + auth check via /version.
+  let version = 'unknown';
+  try {
+    const v = await k8sGet(apiEndpoint, 'version', token, perCall);
+    if (v.status === 401 || v.status === 403) throw new Error('Unauthorized — the token is missing, invalid, or lacks permission.');
+    if (v.status === 0 || v.body === null) {
+      // /version may be closed; try /api as a fallback probe.
+      const api = await k8sGet(apiEndpoint, 'api', token, perCall);
+      if (api.status === 401 || api.status === 403) throw new Error('Unauthorized — the token is missing, invalid, or lacks permission.');
+      if (!api.body) throw new Error('Endpoint did not return a Kubernetes API response (is this a kube-apiserver URL?).');
+    } else {
+      version = v.body?.gitVersion || 'unknown';
+    }
+  } catch (e: any) {
+    const msg = /unauthorized/i.test(e.message) ? e.message
+      : `Could not reach the Kubernetes API at ${apiEndpoint}: ${e.message}`;
+    throw new Error(msg);
+  }
+
+  const resources: K8sResource[] = [];
+  const misconfigurations: K8sMisconfiguration[] = [];
+  const permIssues: string[] = [];
+
+  // Namespaces
+  let namespaces: string[] = [];
+  const ns = await k8sGet(apiEndpoint, 'api/v1/namespaces', token, perCall);
+  if (ns.status === 200 && Array.isArray(ns.body?.items)) namespaces = ns.body.items.map((i: any) => i.metadata?.name).filter(Boolean);
+  else if (ns.status === 403) permIssues.push('list namespaces');
+
+  // Pods (cluster-wide)
+  const pods = await k8sGet(apiEndpoint, 'api/v1/pods', token, perCall);
+  if (pods.status === 200 && Array.isArray(pods.body?.items)) {
+    for (const p of pods.body.items.slice(0, 300)) {
+      const containers = [...(p.spec?.containers || []), ...(p.spec?.initContainers || [])];
+      const privileged = containers.some((c: any) => c.securityContext?.privileged === true);
+      const runsRoot = !(p.spec?.securityContext?.runAsNonRoot === true) && !containers.some((c: any) => c.securityContext?.runAsNonRoot === true);
+      const hostNet = p.spec?.hostNetwork === true;
+      const defaultSA = !p.spec?.serviceAccountName || p.spec.serviceAccountName === 'default';
+      const issues: string[] = [];
+      if (privileged) issues.push('Running as privileged');
+      if (hostNet) issues.push('hostNetwork enabled');
+      if (runsRoot) issues.push('May run as root (no runAsNonRoot)');
+      if (defaultSA) issues.push('Uses default service account');
+      resources.push({
+        type: 'Pod', name: p.metadata?.name || '?', namespace: p.metadata?.namespace || '?',
+        status: p.status?.phase || 'Unknown', issues,
+        severity: privileged || hostNet ? 'critical' : issues.length ? 'high' : 'low',
+      });
+      const rname = `${p.metadata?.namespace}/${p.metadata?.name}`;
+      if (privileged) misconfigurations.push({ category: 'Pod Security', issue: 'Privileged Pod', severity: 'critical', resource: rname, description: 'Container runs with privileged: true (full host access).', recommendation: 'Remove privileged; grant only required capabilities.' });
+      if (hostNet) misconfigurations.push({ category: 'Pod Security', issue: 'hostNetwork Enabled', severity: 'high', resource: rname, description: 'Pod shares the host network namespace.', recommendation: 'Disable hostNetwork unless strictly required.' });
+    }
+  } else if (pods.status === 403) permIssues.push('list pods');
+
+  // Services
+  const svcs = await k8sGet(apiEndpoint, 'api/v1/services', token, perCall);
+  if (svcs.status === 200 && Array.isArray(svcs.body?.items)) {
+    for (const s of svcs.body.items.slice(0, 200)) {
+      const type = s.spec?.type || 'ClusterIP';
+      const isPublic = type === 'LoadBalancer' || type === 'NodePort';
+      resources.push({
+        type: 'Service', name: s.metadata?.name || '?', namespace: s.metadata?.namespace || '?',
+        status: type, issues: isPublic ? [`Exposed via ${type}`] : [], severity: isPublic ? 'high' : 'low',
+      });
+      if (isPublic) misconfigurations.push({ category: 'Network', issue: `Publicly exposed Service (${type})`, severity: 'high', resource: `${s.metadata?.namespace}/${s.metadata?.name}`, description: `Service type ${type} exposes it outside the cluster.`, recommendation: 'Use ClusterIP + an ingress with authn/authz where possible.' });
+    }
+  } else if (svcs.status === 403) permIssues.push('list services');
+
+  // Secrets — being able to list them at all is itself an RBAC finding.
+  const secrets = await k8sGet(apiEndpoint, 'api/v1/secrets', token, perCall);
+  let listableSecrets = 0;
+  if (secrets.status === 200 && Array.isArray(secrets.body?.items)) {
+    listableSecrets = secrets.body.items.length;
+    for (const s of secrets.body.items.slice(0, 100)) {
+      resources.push({ type: 'Secret', name: s.metadata?.name || '?', namespace: s.metadata?.namespace || '?', status: s.type || 'Opaque', issues: ['Readable with this token'], severity: 'high' });
+    }
+    if (listableSecrets > 0) misconfigurations.push({ category: 'RBAC', issue: 'Secrets listable with this token', severity: 'critical', resource: 'cluster-wide', description: `This token can list ${listableSecrets} secrets — overly broad RBAC.`, recommendation: 'Restrict secret access with least-privilege RBAC roles.' });
+  } else if (secrets.status === 403) permIssues.push('list secrets');
+
   const findings = {
-    privilegedPods: resources.filter(r => r.type === 'Pod' && r.issues.includes('Running as privileged')).length,
-    exposedSecrets: resources.filter(r => r.type === 'Secret' && r.issues.length > 0).length,
-    publicServices: resources.filter(r => r.type === 'Service' && r.issues.length > 0).length,
-    missingRBAC: misconfigurations.filter(m => m.category === 'RBAC').length,
-    insecureConfigs: misconfigurations.filter(m => m.category !== 'RBAC').length,
+    privilegedPods: resources.filter((r) => r.type === 'Pod' && r.issues.includes('Running as privileged')).length,
+    exposedSecrets: listableSecrets,
+    publicServices: resources.filter((r) => r.type === 'Service' && r.issues.length > 0).length,
+    missingRBAC: misconfigurations.filter((m) => m.category === 'RBAC').length,
+    insecureConfigs: misconfigurations.filter((m) => m.category !== 'RBAC').length,
   };
-  
-  const securityScore = calculateSecurityScore(misconfigurations);
-  const riskLevel = 
-    securityScore >= 80 ? 'LOW' :
-    securityScore >= 60 ? 'MEDIUM' :
-    securityScore >= 40 ? 'HIGH' : 'CRITICAL';
-  
-  const scanDuration = Math.round((performance.now() - startTime) / 1000);
-  
+
+  const securityScore = scoreFromMisconfigs(misconfigurations);
+  const riskLevel = securityScore >= 80 ? 'LOW' : securityScore >= 60 ? 'MEDIUM' : securityScore >= 40 ? 'HIGH' : 'CRITICAL';
+
+  let clusterName = 'kubernetes';
+  try { clusterName = new URL(apiEndpoint).hostname; } catch { /* noop */ }
+
+  const note = permIssues.length
+    ? `Limited permissions: this token could not ${permIssues.join(', ')}. Results are partial.`
+    : undefined;
+
   return {
-    clusterName: 'production-cluster',
-    version: '1.28.3',
-    totalResources: resources.length,
-    namespaces,
-    resources,
-    misconfigurations,
-    securityScore,
-    riskLevel,
-    findings,
-    scanDuration,
+    clusterName, version, totalResources: resources.length, namespaces, resources,
+    misconfigurations, securityScore, riskLevel, findings,
+    scanDuration: Math.round((performance.now() - startTime) / 1000), note,
   };
 }
