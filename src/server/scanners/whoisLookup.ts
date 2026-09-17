@@ -1,7 +1,18 @@
-import * as whois from 'whois';
+// The `whois` package is CommonJS and assigns its API via `module.exports = {...}`,
+// which esbuild/tsx does not hoist into named ESM bindings — `import * as whois`
+// leaves `whois.lookup` undefined. A default import binds the whole exports object.
+import whoisModule from 'whois';
+const whois = whoisModule as unknown as {
+  lookup: (
+    domain: string,
+    options: { timeout?: number; follow?: number },
+    cb: (err: Error | null, data?: string | string[]) => void,
+  ) => void;
+};
 
 export interface WHOISResult {
   domain: string;
+  source?: 'whois' | 'RDAP';
   registrar?: string;
   registrarURL?: string;
   createdDate?: string;
@@ -167,36 +178,93 @@ function parseWHOISData(domain: string, rawData: string): WHOISResult {
   return result;
 }
 
-/**
- * Perform WHOIS lookup for a domain
- */
-export async function performWHOISLookup(domain: string): Promise<WHOISResult> {
-  return new Promise((resolve, reject) => {
+/** A parsed WHOIS result is "useful" only if it carries at least one real field. */
+function isUsefulWhois(r: WHOISResult): boolean {
+  return !!(r.registrar || r.createdDate || r.expiryDate || (r.nameServers && r.nameServers.length));
+}
+
+/** Classic WHOIS over TCP port 43 via the `whois` package. */
+function port43Lookup(cleanDomain: string): Promise<WHOISResult | null> {
+  return new Promise((resolve) => {
     try {
-      const cleanDomain = domain
-        .toLowerCase()
-        .trim()
-        .replace(/^https?:\/\//, '')
-        .replace(/^www\./, '')
-        .split('/')[0];
-
-      whois.lookup(cleanDomain, { timeout: 15000 }, (err, data) => {
-        if (err) {
-          reject(new Error(`WHOIS lookup failed: ${err.message}`));
-          return;
-        }
-
-        if (!data) {
-          reject(new Error('No WHOIS data returned'));
-          return;
-        }
-
-        const raw = Array.isArray(data) ? data.join("\n") : data;
+      whois.lookup(cleanDomain, { timeout: 12000, follow: 2 }, (err, data) => {
+        if (err || !data) return resolve(null);
+        const raw = Array.isArray(data) ? data.join('\n') : data;
         const result = parseWHOISData(cleanDomain, raw);
+        result.source = 'whois';
         resolve(result);
       });
-    } catch (error: any) {
-      reject(new Error(`WHOIS lookup failed: ${error.message}`));
+    } catch {
+      resolve(null);
     }
   });
+}
+
+/**
+ * RDAP fallback (HTTPS/JSON, the IANA-endorsed successor to port-43 WHOIS).
+ * Works on networks that block outbound port 43, and returns structured data.
+ */
+async function rdapLookup(cleanDomain: string): Promise<WHOISResult | null> {
+  try {
+    const res = await fetch(`https://rdap.org/domain/${encodeURIComponent(cleanDomain)}`, {
+      headers: { Accept: 'application/rdap+json' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return null;
+    const d: any = await res.json();
+
+    const eventDate = (action: string): string | undefined =>
+      (d.events || []).find((e: any) => e.eventAction === action)?.eventDate;
+
+    const registrarEntity = (d.entities || []).find((e: any) => (e.roles || []).includes('registrar'));
+    const registrarName = registrarEntity
+      ? (registrarEntity.vcardArray?.[1]?.find((f: any) => f[0] === 'fn')?.[3] || registrarEntity.handle)
+      : undefined;
+
+    const result: WHOISResult = {
+      domain: cleanDomain,
+      source: 'RDAP',
+      registrar: registrarName,
+      createdDate: eventDate('registration'),
+      updatedDate: eventDate('last changed'),
+      expiryDate: eventDate('expiration'),
+      status: Array.isArray(d.status) ? d.status : [],
+      nameServers: (d.nameservers || [])
+        .map((n: any) => (n.ldhName || '').toLowerCase())
+        .filter(Boolean),
+      dnssec: d.secureDNS?.delegationSigned ? 'signed' : 'unsigned',
+      rawData: JSON.stringify(d, null, 2),
+    };
+    if (result.status?.length === 0) delete result.status;
+    if (result.nameServers?.length === 0) delete result.nameServers;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Perform a WHOIS lookup for a domain. Tries classic port-43 WHOIS first, then
+ * falls back to RDAP over HTTPS when port 43 is blocked or returns nothing
+ * useful — so the tool works on locked-down networks too.
+ */
+export async function performWHOISLookup(domain: string): Promise<WHOISResult> {
+  const cleanDomain = domain
+    .toLowerCase()
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0];
+
+  const whoisResult = await port43Lookup(cleanDomain);
+  if (whoisResult && isUsefulWhois(whoisResult)) return whoisResult;
+
+  const rdap = await rdapLookup(cleanDomain);
+  if (rdap && isUsefulWhois(rdap)) return rdap;
+
+  // Return whatever we managed to parse, even if thin, rather than nothing.
+  if (whoisResult) return whoisResult;
+  if (rdap) return rdap;
+  throw new Error('WHOIS lookup failed: no data from port-43 WHOIS or RDAP fallback');
 }

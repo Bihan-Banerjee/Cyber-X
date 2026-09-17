@@ -78,6 +78,11 @@ export async function performSSLAnalysis(
       {
         host: domain,
         port: 443,
+        // SNI: without servername, name-based virtual hosts and CDN-fronted
+        // sites (the majority of the web) abort the handshake with an
+        // "sslv3 alert handshake failure". Sending the SNI is required for the
+        // analyzer to reach almost any modern HTTPS endpoint.
+        servername: domain,
         timeout: timeoutMs,
         rejectUnauthorized: false,
         checkServerIdentity: () => undefined,
