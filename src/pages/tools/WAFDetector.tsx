@@ -46,6 +46,9 @@ const WAFDetector = () => {
   return (
     <CyberpunkCard title="WAF DETECTOR">
       <div className="space-y-6">
+        <p className="text-sm text-gray-400">
+          Detect a Web Application Firewall (Cloudflare, Akamai, ModSecurity, and more) from response headers and body signatures.
+        </p>
         <div className="flex gap-2">
           <Input
             value={url}

@@ -72,6 +72,9 @@ const BGPASNLookup = () => {
   return (
     <CyberpunkCard title="BGP / ASN LOOKUP">
       <div className="space-y-5">
+        <p className="text-sm text-gray-400">
+          Look up ASN details, announced prefixes, peers, and upstreams for an IP address or AS number.
+        </p>
         <div className="flex gap-2">
           <Input value={target} onChange={(e) => setTarget(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleLookup()}
@@ -79,6 +82,7 @@ const BGPASNLookup = () => {
             className="bg-black/50 border-cyber-cyan/30 text-cyber-cyan font-mono"
             disabled={isLoading} />
           <Button onClick={handleLookup} disabled={isLoading || !target.trim()}
+            aria-label="Look up ASN" title="Look up ASN"
             className="bg-cyber-red hover:bg-cyber-red/80 text-white font-bold px-6">
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
           </Button>
