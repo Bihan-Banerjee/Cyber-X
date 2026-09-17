@@ -515,7 +515,7 @@ export const TOOLS_DETAILS: Record<ToolId, ToolDetails> = {
     usage: "Enter an IP address or use 'auto' to check your own IP. Tool looks up the IP in geolocation databases and displays country, region, city, ISP name, organization, latitude/longitude coordinates, and timezone.",
     details: "Determines approximate physical location of an IP address using geolocation databases maintained by companies like MaxMind. Accuracy varies but typically accurate to city level.",
     outputs: ["Country", "Region/State", "City", "ISP", "Organization", "Coordinates", "Timezone"],
-    warning: "Geolocation is approximate. VPNs and proxies will show different locations."
+    warning: "Geolocation is approximate (typically city-level). Proxy/hosting flags come from the provider; VPN and Tor are NOT detectable from free geolocation data, so they are never flagged here."
   },
   "dir-fuzzer": {
     usage: "Enter the website URL (e.g., https://example.com). Tool tests thousands of common directory and file names (admin, backup, config, .git, etc.) looking for accessible resources. Results show found paths with HTTP status codes.",
@@ -550,10 +550,10 @@ export const TOOLS_DETAILS: Record<ToolId, ToolDetails> = {
     example: "Public buckets found:\n- company-backups (contains database backups)\n- company-media (contains user uploads)"
   },
   "container-scan": {
-    usage: "Enter Docker image name with tag (e.g., nginx:latest, ubuntu:20.04). Tool pulls image metadata and scans for known CVEs (security vulnerabilities), outdated packages, hardcoded secrets, and security misconfigurations. View detailed vulnerability reports.",
-    details: "Analyzes Docker images for security vulnerabilities and compliance issues. Checks base images and installed packages against vulnerability databases to identify security risks.",
-    outputs: ["CVE list with severity", "Outdated packages", "Hardcoded secrets found", "Base image issues", "Remediation suggestions"],
-    warning: "Large images may take time to analyze. Ensure Docker daemon is accessible."
+    usage: "Enter a public Docker Hub image name with tag (e.g., nginx:1.25, library/alpine:3.19, grafana/grafana). The tool reads real image metadata and config from the Docker Hub registry and flags config-level security issues.",
+    details: "Pulls live image metadata (size, layers, created date, architecture/OS) and the image config from Docker Hub, then flags config-derived issues: runs-as-root, mutable :latest tag, secrets baked into ENV, and oversized base images. Package-level CVE scanning is NOT performed here — that needs a scanner with a vulnerability database.",
+    outputs: ["Image size / layer count / created", "Architecture & OS", "Config security issues", "Runs-as-root & secrets-in-ENV checks"],
+    warning: "Package CVE scanning is not done here — run a local scanner for that (e.g. `trivy image <name>`). Only public Docker Hub images are queried."
   },
   "k8s-enum": {
     usage: "Enter Kubernetes API server endpoint URL (e.g., https://cluster.example.com:6443). Provide authentication token if required. Tool lists all accessible pods, services, deployments, configmaps, secrets, and identifies security misconfigurations.",
@@ -630,18 +630,18 @@ export const TOOLS_DETAILS: Record<ToolId, ToolDetails> = {
     warning: "Automated Google searches may trigger CAPTCHAs. Use responsibly."
   },
   "packet-analyzer": {
-    usage: "Upload PCAP/PCAPNG capture file or paste packet data. Tool parses network traffic, identifies protocols (HTTP, DNS, TCP, UDP), extracts source/destination IPs and ports, displays packet contents, and generates statistics about traffic patterns and anomalies.",
-    details: "Parses network capture files to understand traffic flow and identify security issues like unencrypted credentials, suspicious connections, or malware communication. Compatible with Wireshark capture files.",
-    outputs: ["Protocol hierarchy", "Top talkers (IPs)", "Conversation list", "Packet details", "Anomaly detection", "Extracted files"],
-    prerequisites: ["PCAP/PCAPNG file"],
-    warning: "Large captures may take time to analyze. Contains potentially sensitive network data."
+    usage: "Upload a .pcap (libpcap) capture file. The tool parses the real packets, identifies protocols (TCP, UDP, HTTP, HTTPS, DNS, ICMP, ARP, IPv4/IPv6), extracts source/destination IPs and ports, and builds traffic statistics. With no file it shows clearly-labeled demo packets.",
+    details: "Parses real libpcap capture files (Ethernet, raw-IP, null/loopback and Linux-SLL link types) to understand traffic flow. Compatible with tcpdump/Wireshark .pcap files.",
+    outputs: ["Protocol breakdown", "Top talkers (IPs)", "Per-packet details", "Traffic statistics"],
+    prerequisites: [".pcap (libpcap) file"],
+    warning: "Only classic libpcap (.pcap) is parsed — export pcapng as pcap first. Large captures are truncated to the first 5000 packets."
   },
   "packet-capturer": {
     usage: "Select network interface from dropdown (WiFi, Ethernet, etc.). Optionally enter BPF filter (e.g., 'tcp port 80' or 'host 192.168.1.1') to capture specific traffic. Click 'Start Capture' to begin recording packets. Click 'Stop' when done, then download as PCAP file for analysis in Wireshark.",
-    details: "Live packet capture tool. Creates PCAP files for analysis in Wireshark or similar tools. Useful for network troubleshooting, security analysis, and understanding network protocols. Requires appropriate network permissions.",
-    outputs: ["PCAP file download", "Packet statistics during capture", "Live packet view"],
-    prerequisites: ["Network interface access", "Administrator/root privileges (on some systems)"],
-    warning: "Capturing network traffic may be restricted by law or policy. Only capture traffic on networks you own or have permission to monitor."
+    details: "Demonstration capture UI. The packets shown are SYNTHETIC — real live capture requires npcap/libpcap and administrator privileges, which a hosted web tool cannot use. Capture real traffic with Wireshark or tcpdump, then analyze the .pcap in the Packet Analyzer.",
+    outputs: ["Simulated packet stream", "Capture statistics (demo)", "Filter/interface UI"],
+    prerequisites: ["None (demo mode)"],
+    warning: "Demo / simulated data — this is NOT a real capture. Use Wireshark or tcpdump for real packet capture."
   },
   "base64-encoder": {
     usage: "Select encoding format (Base64, Hex, URL, Binary), choose encode or decode, paste your input, and click Process. Output appears instantly with byte length and a copy button.",

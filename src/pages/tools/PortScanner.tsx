@@ -195,6 +195,10 @@ const PortScanner = () => {
   return (
     <CyberpunkCard title="PORT SCANNER">
       <div className="space-y-6">
+        <div className="rounded border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <strong>Authorized use only.</strong> Port scanning hosts you do not own or have
+          permission to scan may be illegal. Scan only your own or explicitly authorized systems.
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm text-cyber-cyan mb-2 tracking-wide">

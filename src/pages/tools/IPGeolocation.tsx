@@ -184,6 +184,11 @@ const IPGeolocation = () => {
                   </span>
                 )}
               </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Proxy/hosting flags come from the geolocation provider. VPN and Tor are not
+                reliably detectable from free geolocation data, so they are not flagged here —
+                the absence of a VPN/Tor badge is not proof an IP is clean.
+              </p>
             </div>
 
             {/* Location Details */}
